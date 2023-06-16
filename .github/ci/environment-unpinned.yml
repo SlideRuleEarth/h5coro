@@ -1,0 +1,7 @@
+name: h5coro-ci
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - pip
+  - pytest
