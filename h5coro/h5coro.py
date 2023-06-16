@@ -99,3 +99,19 @@ def placeholder (parm={}):
         True
     '''
     return True
+
+
+###############################################################################
+# H5Coro Class
+###############################################################################
+
+class H5Coro:
+
+    def __init__(self, resource, driver_class, datasets=[], credentials={}):
+        self.resource = resource
+        self.driver = driver_class(resource, credentials)
+        self.datasets = datasets
+        self.credentials = credentials
+
+        a = self.driver.read(0, 10)
+        print(a)
