@@ -16,7 +16,7 @@ with open('version.txt') as fh:
         version = version[1:]
 
 # list of all utility scripts to be included with package
-scripts=[os.path.join('utils',f) for f in os.listdir('utils') if f.endswith('.py')]
+scripts=[]
 
 setup(
     name='h5coro',

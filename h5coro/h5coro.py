@@ -37,7 +37,7 @@ import time
 import logging
 import numpy
 from datetime import datetime, timedelta
-from h5coro.h5coro import version
+from h5coro import version
 
 ###############################################################################
 # GLOBALS
