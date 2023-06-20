@@ -7,7 +7,7 @@ class FileDriver:
         self.credentials = credentials
         self.f = open(resource, "rb")
 
-    def read(self, size, pos):
+    def read(self, pos, size):
         self.f.seek(pos)
-        return self.f.read(pos)
+        return self.f.read(size)
 
