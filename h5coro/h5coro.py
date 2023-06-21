@@ -104,6 +104,7 @@ class H5Coro:
     H5_TREE_SIGNATURE_LE    = 0x45455254
     H5_HEAP_SIGNATURE_LE    = 0x50414548
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
+    H5CORO_CUSTOM_V1_FLAG   = 0x80
 
     # Constructor
     def __init__(self, resource, driver_class, datasets=[], credentials={}):
@@ -123,14 +124,15 @@ class H5Coro:
         self.datasetPath = []
         self.datasetLevel = 0
 
-        root_group_offset = self.readSuperblock();
-        self.pos = root_group_offset
+        self.pos = self.readSuperblock();
 
         obj_hdr_version = self.readField(1)
         if obj_hdr_version == 0:
             self.readObjHdrV0()
         elif obj_hdr_version == 1:
             self.readObjHdrV1()
+        else:
+            raise FatalError(f'unsupported object header version: {obj_hdr_version}')
 
         #readDataset(info);
 
@@ -234,7 +236,7 @@ class H5Coro:
 
         # print file information
         if verbose:
-            logger.info(f'File Information')
+            logger.info(f'File Information [{self.datasetLevel}] @{self.pos}')
             logger.info(f'Size of Offsets:      {self.offsetSize}')
             logger.info(f'Size of Lengths:      {self.lengthSize}')
             logger.info(f'Base Address:         {self.baseAddress}')
@@ -267,6 +269,7 @@ class H5Coro:
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
                 birth_time = self.readField(4)
+                logger.info(f'Object Information V0 [{self.datasetLevel}] @{self.pos}')
                 logger.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
                 logger.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
                 logger.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
@@ -310,3 +313,37 @@ class H5Coro:
     def readObjHdrV1(self):
         starting_position = self.pos
 
+        if errorChecking:
+            # read reserved field
+            reserved0 = self.readField(1)
+            if reserved0 != 0:
+                raise FatalError(f'reserved field not zero: {reserved0}')
+        else:
+            self.pos += 1
+
+        if verbose:
+            # read number of header messages
+            num_hdr_msgs = self.readField(2)
+            logger.info(f'Object Information V1 [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'# Header Messages:    {num_hdr_msgs}')
+
+            # read object reference count
+            obj_ref_count = self.readField(4)
+            logger.info(f'Obj Reference Count:  {obj_ref_count}')
+        else:
+            self.pos += 6
+
+        # read object header size
+        obj_hdr_size = self.readField(self.lengthSize)
+        end_of_hdr = self.pos + obj_hdr_size
+
+        # read header messages
+        self.pos += self.readMessagesV1(end_of_hdr, self.H5CORO_CUSTOM_V1_FLAG)
+
+        # return bytes read
+        ending_position = self.pos
+        return ending_position - starting_position
+
+    # readMessagesV1
+    def readMessagesV1(self, end_of_hdr, obj_hdf_flags):
+        pass
