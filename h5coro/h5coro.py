@@ -79,7 +79,6 @@ logger = logging.getLogger(__name__)
 class FatalError(RuntimeError):
     pass
 
-
 ###############################################################################
 # H5Dataset Class
 ###############################################################################
@@ -101,6 +100,21 @@ class H5Dataset:
     ALL_ROWS                = -1
     MAX_NDIMS               = 2
     FLAT_NDIMS              = 3
+    FIXED_POINT_TYPE        = 0
+    FLOATING_POINT_TYPE     = 1
+    TIME_TYPE               = 2
+    STRING_TYPE             = 3
+    BIT_FIELD_TYPE          = 4
+    OPAQUE_TYPE             = 5
+    COMPOUND_TYPE           = 6
+    REFERENCE_TYPE          = 7
+    ENUMERATED_TYPE         = 8
+    VARIABLE_LENGTH_TYPE    = 9
+    ARRAY_TYPE              = 10
+    UNKNOWN_TYPE            = 11
+    COMPACT_LAYOUT          = 0
+    CONTIGUOUS_LAYOUT       = 1
+    CHUNKED_LAYOUT          = 2
 
     #######################
     # Constructor
@@ -112,9 +126,20 @@ class H5Dataset:
         self.pos                    = self.resourceObject.rootAddress
         self.datasetPath            = dataset.split('/')
         self.datasetLevel           = 0
-        self.highestDatasetLevel    = 0
-        self.ndims                  = 0
+        self.datasetFound           = False
+        self.ndims                  = None
         self.dimensions             = []
+        self.typesize               = 0
+        self.type                   = None
+        self.signedval              = False
+        self.fillsize               = 0
+        self.fillvalue              = None
+        self.layout                 = None
+        self.size                   = 0
+        self.address                = 0
+        self.chunkElements          = 0
+        self.chunkDimensions        = []
+        self.elementSize            = 0
 
     #######################
     # readField
@@ -136,6 +161,12 @@ class H5Dataset:
     # readDataset
     #######################
     def readDataset(self):
+        self.readObjHdr()
+
+    #######################
+    # readObjHdr
+    #######################
+    def readObjHdr(self):
         obj_hdr_version = self.readField(1)
         if obj_hdr_version == 0:
             self.readObjHdrV0()
@@ -227,7 +258,7 @@ class H5Dataset:
                 raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if self.highestDatasetLevel > self.datasetLevel:
+            if self.datasetFound:
                 self.pos = end_of_hdr # go directory to end of header
                 break # exit loop because dataset is found
 
@@ -282,8 +313,9 @@ class H5Dataset:
     # readMessagesV1
     #######################
     def readMessagesV1(self, end_of_hdr, obj_hdr_flags):
-        starting_position = self.pos
         SIZE_OF_V1_PREFIX = 8
+        starting_position = self.pos
+
         while self.pos < (end_of_hdr - SIZE_OF_V1_PREFIX):
             # read message info
             msg_type = self.readField(2)
@@ -306,7 +338,7 @@ class H5Dataset:
                 raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if self.highestDatasetLevel > self.datasetLevel:
+            if self.datasetFound:
                 self.pos = end_of_hdr # go directory to end of header
                 break # exit loop because dataset is found
 
@@ -439,25 +471,319 @@ class H5Dataset:
     # datatypeMsgHandler
     #######################
     def datatypeMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        starting_position           = self.pos
+        version_class               = self.readField(4)
+        self.typesize               = self.readField(4)
+        version                     = (version_class & 0xF0) >> 4
+        databits                    = version_class >> 8
+        self.type                   = version_class & 0x0F
+        self.signedval              = ((databits & 0x08) >> 3) == 1
+
+        if errorChecking and version != 1:
+            raise FatalError(f'unsupported datatype version: {version}')
+
+        if verbose:
+            logger.info(f'Data Type Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Type Size:            {self.typesize}')
+            logger.info(f'Data Type:            {self.type}')
+            logger.info(f'Signed:               {self.signedval}')
+
+        # Fixed Point
+        if self.type == self.FIXED_POINT_TYPE:
+            if verbose:
+                byte_order      = databits & 0x1
+                pad_type        = (databits & 0x06) >> 1
+                bit_offset      = self.readField(2)
+                bit_precision   = self.readField(2)
+                logger.info(f'Byte Order:           {byte_order}')
+                logger.info(f'Pad Type:             {pad_type}')
+                logger.info(f'Bit Offset:           {bit_offset}')
+                logger.info(f'Bit Precision:        {bit_precision}')
+            else:
+                self.pos += 4
+        # Floating Point
+        elif self.type == self.FLOATING_POINT_TYPE:
+            if verbose:
+                byte_order      = ((databits & 0x40) >> 5) | (databits & 0x1)
+                pad_type        = (databits & 0x0E) >> 1
+                mant_norm       = (databits & 0x30) >> 4
+                sign_loc        = (databits & 0xFF00) >> 8
+                bit_offset      = self.readField(2)
+                bit_precision   = self.readField(2)
+                exp_location    = self.readField(1)
+                exp_size        = self.readField(1)
+                mant_location   = self.readField(1)
+                mant_size       = self.readField(1)
+                exp_bias        = self.readField(4)
+                logger.info(f'Byte Order:           {byte_order}')
+                logger.info(f'Pad Type:             {pad_type}')
+                logger.info(f'Mantissa Norm:        {mant_norm}')
+                logger.info(f'Sign Location:        {sign_loc}')
+                logger.info(f'Bit Offset:           {bit_offset}')
+                logger.info(f'Bit Precision:        {bit_precision}')
+                logger.info(f'Exponent Location:    {exp_location}')
+                logger.info(f'Exponent Size:        {exp_size}')
+                logger.info(f'Mantissa Location:    {mant_location}')
+                logger.info(f'Mantissa Size:        {mant_size}')
+                logger.info(f'Exponent Bias:        {exp_bias}')
+            else:
+                self.pos += 12
+        # Variable Length
+        elif self.type == self.VARIABLE_LENGTH_TYPE:
+            if verbose:
+                vt_type = databits & 0xF # variable length type
+                padding = (databits & 0xF0) >> 4
+                charset = (databits & 0xF00) >> 8
+
+                vt_type_str = "unknown"
+                if vt_type == 0:
+                    vt_type_str = "Sequence"
+                elif vt_type == 1:
+                    vt_type_str = "String"
+
+                padding_str = "unknown"
+                if padding == 0:
+                    padding_str = "Null Terminate"
+                elif padding == 1:
+                    padding_str = "Null Pad"
+                elif padding == 2:
+                    padding_str = "Space Pad"
+
+                charset_str = "unknown"
+                if charset == 0:
+                    charset_str = "ASCII"
+                elif charset == 1:
+                    charset_str = "UTF-8"
+
+                logger.info(f'Variable Type:        {vt_type_str}')
+                logger.info(f'Padding Type:         {padding_str}')
+                logger.info(f'Character Set:        {charset_str}')
+
+            # unsupported
+            raise FatalError(f'variable length data types require reading a global heap, which is not yet supported')
+            # self.pos += self.datatypeMsgHandler(msg_size, obj_hdr_flags)
+        # String
+        elif self.type == self.STRING_TYPE:
+            if verbose:
+                padding = databits & 0x0F
+                charset = (databits & 0xF0) >> 4
+
+                padding_str = "unknown"
+                if padding == 0:
+                    padding_str = "Null Terminate"
+                elif padding == 1:
+                    padding_str = "Null Pad"
+                elif padding == 2:
+                    padding_str = "Space Pad"
+
+                charset_str = "unknown"
+                if charset == 0:
+                    charset_str = "ASCII"
+                elif charset == 1:
+                    charset_str = "UTF-8"
+
+                logger.info(f'Padding Type:         {padding_str}')
+                logger.info(f'Character Set:        {charset_str}')
+        # Default
+        elif errorChecking:
+            raise FatalError(f'unsupported datatype: {self.type}')
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # fillvalueMsgHandler
     #######################
     def fillvalueMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        FILL_VALUE_DEFINED = 0x20
+        starting_position = self.pos
+
+        version = self.readField(1)
+
+        if errorChecking and (version != 2) and (version != 3):
+            raise FatalError(f'invalid fill value version: {version}')
+
+        if verbose:
+            logger.info(f'Fill Value Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+
+        # Version 2
+        if version == 2:
+            if verbose:
+                space_allocation_time = self.readField(1)
+                fill_value_write_time = self.readField(1)
+                logger.info(f'Space Allocation Time:{space_allocation_time}')
+                logger.info(f'Fill Value Write Time:{fill_value_write_time}')
+            else:
+                self.pos += 2
+
+            fill_value_defined = self.readField(1)
+            if fill_value_defined:
+                self.fillsize = self.readField(4)
+                if self.fillsize > 0:
+                    self.fillvalue = self.readField(self.fillsize)
+        # Version 3
+        else:
+            flags = self.readField(1)
+            if verbose:
+                logger.info(f'Fill Flags:           {flags}')
+
+            if flags & FILL_VALUE_DEFINED:
+                self.fillsize = self.readField(4)
+                self.fillvalue = self.readField(self.fillsize)
+
+        if verbose:
+            logger.info(f'Fill Value Size:      {self.fillsize}')
+            logger.info(f'Fill Value:           {self.fillvalue}')
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # linkMsgHandler
     #######################
     def linkMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        SIZE_OF_LEN_OF_NAME_MASK    = 0x03
+        CREATE_ORDER_PRESENT_BIT    = 0x04
+        LINK_TYPE_PRESENT_BIT       = 0x08
+        CHAR_SET_PRESENT_BIT        = 0x10
+        HARD_LINK                   = 0
+        SOFT_LINK                   = 1
+        EXTERNAL_LINK               = 64
+        starting_position           = self.pos
+        version                     = self.readField(1)
+        flags                       = self.readField(1)
+
+        if errorChecking and version != 1:
+            raise FatalError(f'unsupported link message version: {version}')
+
+        # read link type
+        link_type = 0 # default to hard link
+        if flags & LINK_TYPE_PRESENT_BIT:
+            link_type = self.readField(1)
+
+        # read creation order
+        create_order = None
+        if flags & CREATE_ORDER_PRESENT_BIT:
+            create_order = self.readField(8)
+
+        # read character set
+        char_set = None
+        if flags & CHAR_SET_PRESENT_BIT:
+            char_set = self.readField(1)
+
+        # read link name
+        link_name_len_of_len = 1 << (flags & SIZE_OF_LEN_OF_NAME_MASK)
+        if errorChecking and (link_name_len_of_len > 8):
+            raise FatalError(f'invalid link name length of length: {link_name_len_of_len}')
+        link_name_len = self.readField(link_name_len_of_len)
+        link_name = self.readArray(link_name_len).decode('utf-8')
+
+        if verbose:
+            logger.info(f'Link Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Flags:                {flags}')
+            logger.info(f'Link Type:            {link_type}')
+            logger.info(f'Creation Order:       {create_order}')
+            logger.info(f'Character Set:        {char_set}')
+            logger.info(f'Link Name:            {link_name}')
+
+        follow_link = False
+        if link_name == self.datasetPath[self.datasetLevel]:
+            self.datasetLevel += 1
+            follow_link = True
+
+        # process link
+        if link_type == HARD_LINK:
+            obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
+            if verbose:
+                logger.info(f'Hard Link:            {obj_hdr_addr}')
+            if follow_link:
+                return_position = self.pos
+                self.pos = obj_hdr_addr
+                self.readObjHdr()
+                self.pos = return_position
+
+        elif link_type == SOFT_LINK:
+            soft_link_len = self.readField(2)
+            soft_link = self.readArray(soft_link_len).decode('utf-8')
+            if verbose:
+                logger.info(f'Soft Link:            {soft_link}')
+            if errorChecking and follow_link:
+                raise FatalError(f'unsupported soft link encountered: {soft_link}')
+
+        elif link_type == EXTERNAL_LINK:
+            ext_link_len = self.readField(2)
+            ext_link = self.readArray(ext_link_len).decode('utf-8')
+            if verbose:
+                logger.info(f'External Link:        {ext_link}')
+            if errorChecking and follow_link:
+                raise FatalError(f'unsupported external link encountered: {ext_link}')
+
+        elif errorChecking:
+            raise FatalError(f'unsupported link type: {link_type}')
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # datalayoutMsgHandler
     #######################
     def datalayoutMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        starting_position   = self.pos
+        version             = self.readField(1)
+        self.layout         = self.readField(1)
+
+        if errorChecking and version != 3:
+            raise FatalError(f'invalid data layout version: {version}')
+
+        if verbose:
+            logger.info(f'Data Layout Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Layout:               {self.layout}')
+
+        # read layouts
+        if self.layout == self.COMPACT_LAYOUT:
+            self.size = self.readField(2)
+            self.address = self.pos
+            self.pos += self.size
+        elif self.layout == self.CONTIGUOUS_LAYOUT:
+            self.address = self.readField(self.resourceObject.offsetSize)
+            self.size = self.readField(self.resourceObject.lengthSize)
+        elif self.layout == self.CHUNKED_LAYOUT:
+            # read number of dimensions
+            chunk_num_dim = self.readField(1) - 1  # dimensionality is plus one over actual number of dimensions
+            chunk_num_dim = min(chunk_num_dim, self.MAX_NDIMS)
+            if errorChecking and (self.ndims != None) and (chunk_num_dim != self.ndims):
+                raise FatalError(f'number of chunk dimensions does not match dimensionality of data: {chunk_num_dim} != {self.ndims}')
+            # read address of B-tree
+            self.address = self.readField(self.resourceObject.offsetSize)
+            # read chunk dimensions
+            if chunk_num_dim > 0:
+                self.chunkElements = 1
+                for _ in range(chunk_num_dim):
+                    chunk_dimension = self.readField(4)
+                    self.chunkDimensions.append(chunk_dimension)
+                    self.chunkElements *= chunk_dimension
+            # read element size
+            self.elementSize = self.readField(4)
+            # verbose
+            if verbose:
+                logger.info(f'Element Size:         {self.elementSize}')
+                logger.info(f'# Chunked Dimensions: {chunk_num_dim}')
+                for d in range(chunk_num_dim):
+                    logger.info(f'Chunk Dimension {d}:    {self.chunkDimensions[d]}')
+        elif errorChecking:
+            raise FatalError(f'unsupported data layout: {self.layout}')
+
+        # verbose
+        if verbose:
+            logger.info(f'Dataset Size:         {self.size}')
+            logger.info(f'Dataset Address:      {self.address}')
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # attributeMsgHandler
