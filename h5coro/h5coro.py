@@ -27,18 +27,12 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-import netrc
 import requests
-import json
+import threading
 import struct
-import ctypes
-import time
 import logging
 import numpy
-from datetime import datetime, timedelta
-from h5coro import version
-import threading
+from datetime import datetime
 
 ###############################################################################
 # GLOBALS
@@ -87,15 +81,14 @@ class FatalError(RuntimeError):
 
 
 ###############################################################################
-# H5Coro Class
+# H5Dataset Class
 ###############################################################################
 
-class H5Coro:
+class H5Dataset:
 
+    #######################
     # Constants
-    CACHE_LINE_SIZE         =               0x10 #0x400000
-    CACHE_LINE_MASK         = 0xFFFFFFFFFFFFFFF0
-    H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
+    #######################
     H5_OHDR_SIGNATURE_LE    = 0x5244484F
     H5_FRHP_SIGNATURE_LE    = 0x50485246
     H5_FHDB_SIGNATURE_LE    = 0x42444846
@@ -106,26 +99,30 @@ class H5Coro:
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
     H5CORO_CUSTOM_V1_FLAG   = 0x80
 
+    #######################
     # Constructor
-    def __init__(self, resource, driver_class, datasets=[], credentials={}):
-        self.resource = resource
-        self.driver = driver_class(resource, credentials)
-        self.datasets = datasets
+    #######################
+    def __init__(self, resourceObject, dataset, credentials={}):
+        self.resourceObject = resourceObject
+        self.dataset = dataset
         self.credentials = credentials
-
-        self.pos = 0
-        self.lock = threading.Lock()
-        self.cache = {}
-
-        self.offsetSize = 0
-        self.lengthSize = 0
-        self.baseAddress = 0
-
-        self.datasetPath = []
+        self.pos = self.resourceObject.rootAddress
+        self.datasetPath = dataset.split('/')
         self.datasetLevel = 0
+        self.highestDatasetLevel = 0
 
-        self.pos = self.readSuperblock();
+    #######################
+    # readField
+    #######################
+    def readField(self, size):
+        raw = self.resourceObject.ioRequest(self.pos, size)
+        self.pos += size
+        return struct.unpack(f'<{SIZE_2_FORMAT[size]}', raw)[0]
 
+    #######################
+    # readDataset
+    #######################
+    def readDataset(self):
         obj_hdr_version = self.readField(1)
         if obj_hdr_version == 0:
             self.readObjHdrV0()
@@ -134,118 +131,9 @@ class H5Coro:
         else:
             raise FatalError(f'unsupported object header version: {obj_hdr_version}')
 
-        #readDataset(info);
-
-    # ioRequest
-    def ioRequest(self, size):
-        # Check if Caching
-        if size <= self.CACHE_LINE_SIZE:
-            data = None
-            cache_line = (self.pos + self.baseAddress) & self.CACHE_LINE_MASK
-            with self.lock:
-                # Populate Cache (if not there already)
-                if cache_line not in self.cache:
-                    self.cache[cache_line] = self.driver.read(cache_line, self.CACHE_LINE_SIZE)
-                # Calculate Start and Stop Indexes into Cache Line
-                start_index = (self.pos + self.baseAddress) - cache_line
-                stop_index = start_index + size
-                # Pull Data out of Cache
-                if stop_index <= self.CACHE_LINE_SIZE:
-                    data = self.cache[cache_line][start_index:stop_index]
-                else:
-                    # Populate Next Cache Line
-                    next_cache_line = (cache_line + stop_index) & self.CACHE_LINE_MASK
-                    if next_cache_line not in self.cache:
-                        self.cache[next_cache_line] = self.driver.read(next_cache_line, self.CACHE_LINE_SIZE)
-                    next_stop_index = stop_index - self.CACHE_LINE_SIZE
-                    # Concatenate Data from Two Cache Lines
-                    data = self.cache[cache_line][start_index:] + self.cache[next_cache_line][:next_stop_index]
-            # Move Position and Return Data
-            self.pos += size
-            return data
-        else:
-            # Direct Read and Move Position
-            data = self.driver.read(self.pos + self.baseAddress, size)
-            self.pos += size
-            return data
-
-    # readField
-    def readField(self, size):
-        raw = self.ioRequest(size)
-        fmt = SIZE_2_FORMAT[size]
-        return struct.unpack(f'<{fmt}', raw)[0]
-
-    # readSuperblock
-    def readSuperblock(self):
-
-        root_group_offset = None
-
-        if errorChecking:
-            # check file signature
-            self.pos = 0
-            signature = self.readField(8)
-            if signature != self.H5_SIGNATURE_LE:
-                raise FatalError(f'invalid file signature: {signature}')
-
-            # check file version
-            superblock_version = self.readField(1)
-            if superblock_version != 0 and superblock_version != 2:
-                raise FatalError(f'unsupported superblock version: {superblock_version}')
-
-        # Super Block Version 0 #
-        if superblock_version == 0:
-            if errorChecking:
-                # check free space version
-                self.pos = 9
-                freespace_version = self.readField(1)
-                if freespace_version != 0:
-                    raise FatalError(f'unsupported free space version: {freespace_version}')
-
-                # check root table version
-                roottable_version = self.readField(1)
-                if roottable_version != 0:
-                    raise FatalError(f'unsupported root table version: {roottable_version}')
-
-            # read sizes
-            self.pos = 13
-            self.offsetSize = self.readField(1)
-            self.lengthSize = self.readField(1)
-
-            # set base address
-            self.pos = 24
-            self.baseAddress = self.readField(self.offsetSize)
-
-            # read group offset
-            self.pos = 24 + (5 * self.offsetSize)
-            root_group_offset = self.readField(self.offsetSize)
-
-        # Super Block Version 1 #
-        else:
-            # read sizes
-            self.pos = 9
-            self.offsetSize = self.readField(1)
-            self.lengthSize = self.readField(1)
-
-            # set base address
-            self.pos = 12
-            self.baseAddress = self.readField(self.offsetSize)
-
-            # read group offset
-            self.pos = 12 + (3 * self.offsetSize)
-            root_group_offset = self.readField(self.offsetSize)
-
-        # print file information
-        if verbose:
-            logger.info(f'File Information [{self.datasetLevel}] @{self.pos}')
-            logger.info(f'Size of Offsets:      {self.offsetSize}')
-            logger.info(f'Size of Lengths:      {self.lengthSize}')
-            logger.info(f'Base Address:         {self.baseAddress}')
-            logger.info(f'Root Group Offset:    {root_group_offset}')
-
-        # return root group offset
-        return root_group_offset
-
+    #######################
     # readObjHdrV0
+    #######################
     def readObjHdrV0(self):
         starting_position = self.pos
         if errorChecking:
@@ -302,14 +190,47 @@ class H5Coro:
             self.pos += 4
 
         # return bytes read
-        ending_position = self.pos
-        return ending_position - starting_position
+        return self.pos - starting_position
 
+    #######################
     # readMessagesV0
-    def readMessagesV0(self, end_of_hdr, obj_hdf_flags):
-        pass
+    #######################
+    def readMessagesV0(self, end_of_hdr, obj_hdr_flags):
+        starting_position = self.pos
+        while self.pos < end_of_hdr:
+            # read message info
+            msg_type = self.readField(1)
+            msg_size = self.readField(2)
+            msg_flags = self.readField(1)
 
+            # read messag order
+            ATTR_CREATION_TRACK_BIT = 0x4
+            if obj_hdr_flags & ATTR_CREATION_TRACK_BIT:
+                msg_order = self.readField(2)
+
+            # read message
+            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags)
+            if errorChecking and (bytes_read != msg_size):
+                raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
+
+            # check if dataset found
+            if self.highestDatasetLevel > self.datasetLevel:
+                self.pos = end_of_hdr # go directory to end of header
+                break # exit loop because dataset is found
+
+            # update position
+            self.pos += bytes_read
+
+        # check bytes read
+        if errorChecking and (self.pos != end_of_hdr):
+            raise FatalError(f'did not read correct number of bytes: {self.pos} != {end_of_hdr}')
+
+        # return bytes read
+        return self.pos - starting_position
+
+    #######################
     # readObjHdrV1
+    #######################
     def readObjHdrV1(self):
         starting_position = self.pos
 
@@ -334,7 +255,7 @@ class H5Coro:
             self.pos += 6
 
         # read object header size
-        obj_hdr_size = self.readField(self.lengthSize)
+        obj_hdr_size = self.readField(self.resourceObject.lengthSize)
         end_of_hdr = self.pos + obj_hdr_size
 
         # read header messages
@@ -344,6 +265,269 @@ class H5Coro:
         ending_position = self.pos
         return ending_position - starting_position
 
+    #######################
     # readMessagesV1
-    def readMessagesV1(self, end_of_hdr, obj_hdf_flags):
-        pass
+    #######################
+    def readMessagesV1(self, end_of_hdr, obj_hdr_flags):
+        starting_position = self.pos
+        SIZE_OF_V1_PREFIX = 8
+        while self.pos < (end_of_hdr - SIZE_OF_V1_PREFIX):
+            # read message info
+            msg_type = self.readField(2)
+            msg_size = self.readField(2)
+            msg_flags = self.readField(1)
+
+            # read reserved fields
+            if errorChecking:
+                reserved1 = self.readField(1)
+                reserved2 = self.readField(2)
+                if reserved1 != 0 and reserved2 != 0:
+                    raise FatalError(f'invalid reserved fields: {reserved1},{reserved2}')
+            else:
+                self.pos += 3
+
+            # read message
+            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags)
+            bytes_read += ((8 - (bytes_read % 8)) % 8) # align to 8-byte boundary
+            if errorChecking and (bytes_read != msg_size):
+                raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
+
+            # check if dataset found
+            if self.highestDatasetLevel > self.datasetLevel:
+                self.pos = end_of_hdr # go directory to end of header
+                break # exit loop because dataset is found
+
+            # update position
+            self.pos += bytes_read
+
+        # move past gap
+        if self.pos < end_of_hdr:
+            self.pos = end_of_hdr
+
+        # check bytes read
+        if errorChecking and (self.pos != end_of_hdr):
+            raise FatalError(f'did not read correct number of bytes: {self.pos} != {end_of_hdr}')
+
+        # return bytes read
+        return self.pos - starting_position
+
+    #######################
+    # readMessage
+    #######################
+    def readMessage(self, msg_type, msg_size, obj_hdr_flags):
+        msg_handler_table = {
+            0x1:  self.dataspaceMsgHandler,
+            0x2:  self.linkinfoMsgHandler,
+            0x3:  self.datatypeMsgHandler,
+            0x4:  self.fillvalueMsgHandler,
+            0x6:  self.linkMsgHandler,
+            0x8:  self.datalayoutMsgHandler,
+            0xC:  self.attributeMsgHandler,
+            0x10: self.headercontMsgHandler,
+            0x11: self.symboltableMsgHandler,
+            0x15: self.attributeinfoMsgHandler
+        }
+        try:
+            return msg_handler_table[msg_type](msg_size, obj_hdr_flags)
+        except FatalError:
+            if verbose:
+                logger.info(f'Skipped Message [{self.datasetLevel}] @{self.pos}: {msg_type}, {msg_size}')
+            return msg_size
+
+    #######################
+    # dataspaceMsgHandler
+    #######################
+    def dataspaceMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # linkinfoMsgHandler
+    #######################
+    def linkinfoMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # datatypeMsgHandler
+    #######################
+    def datatypeMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # fillvalueMsgHandler
+    #######################
+    def fillvalueMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # linkMsgHandler
+    #######################
+    def linkMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # datalayoutMsgHandler
+    #######################
+    def datalayoutMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # attributeMsgHandler
+    #######################
+    def attributeMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # headercontMsgHandler
+    #######################
+    def headercontMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # symboltableMsgHandler
+    #######################
+    def symboltableMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+    #######################
+    # attributeinfoMsgHandler
+    #######################
+    def attributeinfoMsgHandler(self, msg_size, obj_hdr_flags):
+        return msg_size
+
+
+###############################################################################
+# H5Coro Class
+###############################################################################
+
+class H5Coro:
+
+    #######################
+    # Constants
+    #######################
+    CACHE_LINE_SIZE         =               0x10 #0x400000
+    CACHE_LINE_MASK         = 0xFFFFFFFFFFFFFFF0
+    H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
+
+    #######################
+    # Constructor
+    #######################
+    def __init__(self, resource, driver_class, datasets=[], credentials={}):
+        self.resource = resource
+        self.driver = driver_class(resource, credentials)
+
+        self.lock = threading.Lock()
+        self.cache = {}
+
+        self.offsetSize = 0
+        self.lengthSize = 0
+        self.baseAddress = 0
+        self.rootAddress = self.readSuperblock()
+
+        workers = []
+        for dataset in datasets:
+            worker = H5Dataset(self, dataset, credentials)
+            thread = threading.Thread(target=worker.readDataset, daemon=True)
+            workers.append(thread)
+            thread.start()
+
+    #######################
+    # ioRequest
+    #######################
+    def ioRequest(self, pos, size):
+        data = None
+        # Check if Caching
+        if size <= self.CACHE_LINE_SIZE:
+            cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
+            with self.lock:
+                # Populate Cache (if not there already)
+                if cache_line not in self.cache:
+                    self.cache[cache_line] = self.driver.read(cache_line, self.CACHE_LINE_SIZE)
+                # Calculate Start and Stop Indexes into Cache Line
+                start_index = (pos + self.baseAddress) - cache_line
+                stop_index = start_index + size
+                # Pull Data out of Cache
+                if stop_index <= self.CACHE_LINE_SIZE:
+                    data = self.cache[cache_line][start_index:stop_index]
+                else:
+                    # Populate Next Cache Line
+                    next_cache_line = (cache_line + stop_index) & self.CACHE_LINE_MASK
+                    if next_cache_line not in self.cache:
+                        self.cache[next_cache_line] = self.driver.read(next_cache_line, self.CACHE_LINE_SIZE)
+                    next_stop_index = stop_index - self.CACHE_LINE_SIZE
+                    # Concatenate Data from Two Cache Lines
+                    data = self.cache[cache_line][start_index:] + self.cache[next_cache_line][:next_stop_index]
+        else:
+            # Direct Read
+            data = self.driver.read(pos + self.baseAddress, size)
+        # Return Data
+        return data
+
+
+    #######################
+    # readSuperblock
+    #######################
+    def readSuperblock(self):
+
+        # read start of superblock
+        block = self.ioRequest(0, 9)
+        signature, superblock_version = struct.unpack(f'<QB', block)
+
+        # check file signature
+        if signature != self.H5_SIGNATURE_LE:
+            raise FatalError(f'invalid file signature: {signature}')
+
+        # check file version
+        if superblock_version != 0 and superblock_version != 2:
+            raise FatalError(f'unsupported superblock version: {superblock_version}')
+
+        # Super Block Version 0 #
+        if superblock_version == 0:
+            if errorChecking:
+                # read start of superblock
+                block = self.ioRequest(9, 2)
+                freespace_version, roottable_version = struct.unpack(f'<BB', block)
+
+                # check free space version
+                if freespace_version != 0:
+                    raise FatalError(f'unsupported free space version: {freespace_version}')
+
+                # check root table version
+                if roottable_version != 0:
+                    raise FatalError(f'unsupported root table version: {roottable_version}')
+
+            # read sizes
+            block = self.ioRequest(13, 2)
+            self.offsetSize, self.lengthSize = struct.unpack(f'<BB', block)
+
+            # set base address
+            block = self.ioRequest(24, self.offsetSize)
+            self.baseAddress = struct.unpack(f'<{SIZE_2_FORMAT[self.offsetSize]}', block)[0]
+
+            # read group offset
+            block = self.ioRequest(24 + (5 * self.offsetSize), self.offsetSize)
+            root_group_offset = struct.unpack(f'<{SIZE_2_FORMAT[self.offsetSize]}', block)[0]
+
+        # Super Block Version 1 #
+        else:
+            # read sizes
+            block = self.ioRequest(9, 2)
+            self.offsetSize, self.lengthSize = struct.unpack(f'<BB', block)
+
+            # set base address
+            block = self.ioRequest(12, self.offsetSize)
+            self.baseAddress = struct.unpack(f'<{SIZE_2_FORMAT[self.offsetSize]}', block)[0]
+
+            # read group offset
+            block = self.ioRequest(12 + (3 * self.offsetSize), self.offsetSize)
+            root_group_offset = struct.unpack(f'<{SIZE_2_FORMAT[self.offsetSize]}', block)[0]
+
+        # print file information
+        if verbose:
+            logger.info(f'File Information @{root_group_offset}')
+            logger.info(f'Size of Offsets:      {self.offsetSize}')
+            logger.info(f'Size of Lengths:      {self.lengthSize}')
+            logger.info(f'Base Address:         {self.baseAddress}')
+            logger.info(f'Root Group Offset:    {root_group_offset}')
+
+        # return root group offset
+        return root_group_offset
