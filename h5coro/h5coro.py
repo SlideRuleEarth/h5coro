@@ -98,18 +98,23 @@ class H5Dataset:
     H5_HEAP_SIGNATURE_LE    = 0x50414548
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
     H5CORO_CUSTOM_V1_FLAG   = 0x80
+    ALL_ROWS                = -1
+    MAX_NDIMS               = 2
+    FLAT_NDIMS              = 3
 
     #######################
     # Constructor
     #######################
     def __init__(self, resourceObject, dataset, credentials={}):
-        self.resourceObject = resourceObject
-        self.dataset = dataset
-        self.credentials = credentials
-        self.pos = self.resourceObject.rootAddress
-        self.datasetPath = dataset.split('/')
-        self.datasetLevel = 0
-        self.highestDatasetLevel = 0
+        self.resourceObject         = resourceObject
+        self.dataset                = dataset
+        self.credentials            = credentials
+        self.pos                    = self.resourceObject.rootAddress
+        self.datasetPath            = dataset.split('/')
+        self.datasetLevel           = 0
+        self.highestDatasetLevel    = 0
+        self.ndims                  = 0
+        self.dimensions             = []
 
     #######################
     # readField
@@ -118,6 +123,14 @@ class H5Dataset:
         raw = self.resourceObject.ioRequest(self.pos, size)
         self.pos += size
         return struct.unpack(f'<{SIZE_2_FORMAT[size]}', raw)[0]
+
+    #######################
+    # readArray
+    #######################
+    def readArray(self, size):
+        raw = self.resourceObject.ioRequest(self.pos, size)
+        self.pos += size
+        return raw
 
     #######################
     # readDataset
@@ -338,13 +351,89 @@ class H5Dataset:
     # dataspaceMsgHandler
     #######################
     def dataspaceMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        MAX_DIM_PRESENT    = 0x1
+        PERM_INDEX_PRESENT = 0x2
+        starting_position  = self.pos
+        version            = self.readField(1)
+        dimensionality     = self.readField(1)
+        flags              = self.readField(1)
+        self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
+
+        if errorChecking:
+            if version != 1 or version != 2:
+                raise FatalError(f'unsupported dataspace version: {version}')
+            if flags & PERM_INDEX_PRESENT:
+                raise FatalError(f'unsupported permutation indexes')
+            if dimensionality > self.MAX_NDIMS:
+                raise FatalError(f'unsupported number of dimensions: {dimensionality}')
+
+        if verbose:
+            logger.info(f'Dataspace Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Dimensionality:       {dimensionality}')
+            logger.info(f'Flags:                {flags}')
+
+        # read and populate data dimensions
+        self.ndims = min(dimensionality, self.MAX_NDIMS)
+        if self.ndims > 0:
+            for x in range(self.ndims):
+                dimension = self.readField(self.resourceObject.lengthSize)
+                self.dimensions.append(dimension)
+                if verbose:
+                    logger.info(f'Dimension  {x}:          {dimension}')
+
+            # skip over dimension permutations
+            if flags & MAX_DIM_PRESENT:
+                skip_bytes = dimensionality * self.resourceObject.lengthSize
+                self.pos += skip_bytes
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # linkinfoMsgHandler
     #######################
     def linkinfoMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        MAX_CREATE_PRESENT_BIT      = 0x1
+        CREATE_ORDER_PRESENT_BIT    = 0x2
+        starting_position           = self.pos
+        version                     = self.readField(1)
+        flags                       = self.readField(1)
+
+        if errorChecking:
+            if version != 0:
+                raise FatalError(f'unsupported link info version: {version}')
+
+        if verbose:
+            logger.info(f'Link Information Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Flags:                {flags}')
+
+        # read maximum creation index
+        if flags & MAX_CREATE_PRESENT_BIT:
+            max_create_index = self.readField(8)
+            if verbose:
+                logger.info(f'Max Create Index:     {max_create_index}')
+
+        # read heap address and name index
+        heap_address = self.readField(self.resourceObject.offsetSize)
+        name_index = self.readField(self.resourceObject.offsetSize)
+        if verbose:
+            logger.info(f'Heap Address:         {heap_address}')
+            logger.info(f'Name Index:           {name_index}')
+
+        # read address of v2 B-tree for creation order index
+        if flags & CREATE_ORDER_PRESENT_BIT:
+            create_order_index = self.readField(self.resourceObject.offsetSize)
+            if verbose:
+                logger.info(f'Create Order Index:   {create_order_index}')
+
+        # follow heap address if provided
+        if heap_address == {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF, 8: 0xFFFFFFFFFFFFFFFF}[self.resourceObject.offsetSize]:
+            self.readFractalHeap(6, heap_address, obj_hdr_flags)
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # datatypeMsgHandler
@@ -393,6 +482,12 @@ class H5Dataset:
     #######################
     def attributeinfoMsgHandler(self, msg_size, obj_hdr_flags):
         return msg_size
+
+    #######################
+    # readFractalHeap
+    #######################
+    def readFractalHeap(self, msg_type, heap_address, obj_hdr_flags):
+        pass
 
 
 ###############################################################################
@@ -462,12 +557,10 @@ class H5Coro:
         # Return Data
         return data
 
-
     #######################
     # readSuperblock
     #######################
     def readSuperblock(self):
-
         # read start of superblock
         block = self.ioRequest(0, 9)
         signature, superblock_version = struct.unpack(f'<QB', block)
