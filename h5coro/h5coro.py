@@ -63,6 +63,13 @@ SIZE_2_FORMAT = {
     8: 'Q'
 }
 
+INVALID_VALUE = {
+    1: 0xFF,
+    2: 0xFFFF,
+    4: 0xFFFFFFFF,
+    8: 0xFFFFFFFFFFFFFFFF
+}
+
 session = requests.Session()
 session.trust_env = False
 
@@ -88,6 +95,9 @@ class H5Dataset:
     #######################
     # Constants
     #######################
+    # local
+    H5CORO_CUSTOM_V1_FLAG   = 0x80
+    # signatures
     H5_OHDR_SIGNATURE_LE    = 0x5244484F
     H5_FRHP_SIGNATURE_LE    = 0x50485246
     H5_FHDB_SIGNATURE_LE    = 0x42444846
@@ -96,10 +106,11 @@ class H5Dataset:
     H5_TREE_SIGNATURE_LE    = 0x45455254
     H5_HEAP_SIGNATURE_LE    = 0x50414548
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
-    H5CORO_CUSTOM_V1_FLAG   = 0x80
+    # dimensions
     ALL_ROWS                = -1
     MAX_NDIMS               = 2
     FLAT_NDIMS              = 3
+    # datatypes
     FIXED_POINT_TYPE        = 0
     FLOATING_POINT_TYPE     = 1
     TIME_TYPE               = 2
@@ -112,9 +123,22 @@ class H5Dataset:
     VARIABLE_LENGTH_TYPE    = 9
     ARRAY_TYPE              = 10
     UNKNOWN_TYPE            = 11
+    # layouts
     COMPACT_LAYOUT          = 0
     CONTIGUOUS_LAYOUT       = 1
     CHUNKED_LAYOUT          = 2
+    # messages
+    DATASPACE_MSG           = 0x1
+    LINK_INFO_MSG           = 0x2
+    DATATYPE_MSG            = 0x3
+    FILL_VALUE_MSG          = 0x5
+    LINK_MSG                = 0x6
+    DATA_LAYOUT_MSG         = 0x8
+    FILTER_MSG              = 0xB
+    ATTRIBUTE_MSG           = 0xC
+    HEADER_CONT_MSG         = 0x10
+    SYMBOL_TABLE_MSG        = 0x11
+    ATTRIBUTE_INFO_MSG      = 0x15
 
     #######################
     # Constructor
@@ -140,6 +164,14 @@ class H5Dataset:
         self.chunkElements          = 0
         self.chunkDimensions        = []
         self.elementSize            = 0
+        self.filter                 = {
+            1:  False, # deflate
+            2:  False, # shuffle
+            3:  False, # fletcher32
+            4:  False, # szip
+            5:  False, # nbit
+            6:  False  # scaleoffset
+        }
 
     #######################
     # readField
@@ -226,12 +258,8 @@ class H5Dataset:
         end_of_hdr = self.pos + size_of_chunk0
         self.pos += self.readMessagesV0(end_of_hdr, obj_hdr_flags)
 
-        # verify checksum
-        if verbose:
-            checksum = self.readField(4)
-            logger.info(f'Checksum:             {checksum}')
-        else:
-            self.pos += 4
+        # skip checksum
+        self.pos += 4
 
         # return bytes read
         return self.pos - starting_position
@@ -361,16 +389,17 @@ class H5Dataset:
     #######################
     def readMessage(self, msg_type, msg_size, obj_hdr_flags):
         msg_handler_table = {
-            0x1:  self.dataspaceMsgHandler,
-            0x2:  self.linkinfoMsgHandler,
-            0x3:  self.datatypeMsgHandler,
-            0x4:  self.fillvalueMsgHandler,
-            0x6:  self.linkMsgHandler,
-            0x8:  self.datalayoutMsgHandler,
-            0xC:  self.attributeMsgHandler,
-            0x10: self.headercontMsgHandler,
-            0x11: self.symboltableMsgHandler,
-            0x15: self.attributeinfoMsgHandler
+            self.DATASPACE_MSG:         self.dataspaceMsgHandler,
+            self.LINK_INFO_MSG:         self.linkinfoMsgHandler,
+            self.DATATYPE_MSG:          self.datatypeMsgHandler,
+            self.FILL_VALUE_MSG:        self.fillvalueMsgHandler,
+            self.LINK_MSG:              self.linkMsgHandler,
+            self.DATA_LAYOUT_MSG:       self.datalayoutMsgHandler,
+            self.FILTER_MSG:            self.filterMsgHandler,
+            self.ATTRIBUTE_MSG:         self.attributeMsgHandler,
+            self.HEADER_CONT_MSG:       self.headercontMsgHandler,
+            self.SYMBOL_TABLE_MSG:      self.symboltableMsgHandler,
+            self.ATTRIBUTE_INFO_MSG:    self.attributeinfoMsgHandler
         }
         try:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags)
@@ -461,8 +490,8 @@ class H5Dataset:
                 logger.info(f'Create Order Index:   {create_order_index}')
 
         # follow heap address if provided
-        if heap_address == {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF, 8: 0xFFFFFFFFFFFFFFFF}[self.resourceObject.offsetSize]:
-            self.readFractalHeap(6, heap_address, obj_hdr_flags)
+        if heap_address == INVALID_VALUE[self.resourceObject.offsetSize]:
+            self.readFractalHeap(self.LINK_MSG, heap_address, obj_hdr_flags)
 
         # return bytes read
         return self.pos - starting_position
@@ -786,28 +815,317 @@ class H5Dataset:
         return self.pos - starting_position
 
     #######################
+    # filterMsgHandler
+    #######################
+    def filterMsgHandler(self, msg_size, obj_hdr_flags):
+        starting_position   = self.pos
+        version             = self.readField(1)
+        num_filters         = self.readField(1)
+        if errorChecking and (version != 1) and (version != 2):
+            raise FatalError(f'invalid filter version: {version}')
+
+        if verbose:
+            logger.info(f'Filter Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Num Filters:          {num_filters}')
+
+        # move past reserved bytes in version 1
+        if version == 1:
+            self.pos += 6
+
+        # read filters
+        for f in range(num_filters):
+            # read filter id
+            filter = self.readField(2)
+
+            # read filter name length
+            name_len = 0
+            if (version == 1) or (filter >= 256):
+                name_len = self.readField(2)
+
+            # read Filter parameters
+            flags     = self.readField(2)
+            num_parms = self.readField(2)
+
+            # consistency check flags
+            if errorChecking and (flags != 0) and (flags != 1):
+                raise FatalError(f'invalid flags in filter message: {flags}')
+
+            # read name
+            filter_name = ""
+            if name_len > 0:
+                filter_name = self.readArray(name_len).decode('utf-8')
+                name_padding = (8 - (name_len % 8)) % 8
+                self.pos += name_padding
+
+            # display
+            if verbose:
+                logger.info(f'Filter ID:            {filter}')
+                logger.info(f'Flags:                {flags}')
+                logger.info(f'# Parameters:         {num_parms}')
+                logger.info(f'Filter Name:          {filter_name}')
+
+            # set filter
+            try:
+                self.filter[filter] = True
+            except Exception:
+                raise FatalError(f'unsupported filter specified: {filter}')
+
+            # read client data
+            self.pos += num_parms * 4
+
+            # handle padding (version 1 only)
+            if (version == 1) and (num_parms % 2 == 1):
+                self.pos += 4
+
+        # return bytes read
+        return self.pos - starting_position
+
+    #######################
     # attributeMsgHandler
     #######################
     def attributeMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        starting_position   = self.pos
+        version             = self.readField(1)
+        self.pos           += 1
+        name_size           = self.readField(2)
+        datatype_size       = self.readField(2)
+        dataspace_size      = self.readField(2)
+
+        if errorChecking and (version != 1):
+            raise FatalError(f'invalid attribute version: {version}')
+
+        # read attribute name
+        attr_name = self.readArray(name_size).decode('utf-8')
+        self.pos += (8 - (name_size % 8)) % 8; # align to next 8-byte boundary
+
+        # display
+        if verbose:
+            logger.info(f'Attribute Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Name:                 {attr_name}')
+            logger.info(f'Message Size:         {msg_size}')
+            logger.info(f'Datatype Size:        {datatype_size}')
+            logger.info(f'Dataspace Size:       {dataspace_size}')
+
+        # check if desired attribute
+        if( ((self.datasetLevel + 1) == self.datasetPath.length()) and
+            (attr_name == self.datasetPath[self.datasetLevel]) ):
+            self.datasetFound = True
+
+            # read datatype message
+            datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags)
+            if errorChecking and (datatype_bytes_read > datatype_size):
+                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} > {datatype_size}')
+            self.pos += datatype_bytes_read
+            self.pos += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
+
+            # read dataspace message
+            dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags)
+            if errorChecking and (dataspace_bytes_read > dataspace_size):
+                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} > {dataspace_size}')
+            self.pos += dataspace_bytes_read
+            self.pos += (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
+
+            # set meta data
+            self.layout = self.CONTIGUOUS_LAYOUT
+            for f in filter.keys():
+                filter[f] = False
+            self.address = self.pos
+            self.size = msg_size - (self.pos - starting_position)
+
+            # move to end of data
+            self.pos += self.size
+
+            # return bytes read
+            return self.pos - starting_position
+        else:
+            # skip processing message
+            return msg_size
 
     #######################
     # headercontMsgHandler
     #######################
     def headercontMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        starting_position   = self.pos
+        hc_offset           = self.readField(self.resourceObject.offsetSize)
+        hc_length           = self.readField(self.resourceObject.lengthSize)
+
+        if verbose:
+            logger.info(f'Header Continuation Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Offset:               {hc_offset}')
+            logger.info(f'Length:               {hc_length}')
+
+        # go to continuation block
+        return_position = self.pos
+        self.pos = hc_offset
+
+        # read continuation block
+        if obj_hdr_flags & self.H5CORO_CUSTOM_V1_FLAG:
+            end_of_chdr = hc_offset + hc_length
+            self.pos += self.readMessagesV1 (end_of_chdr, obj_hdr_flags)
+        else:
+            # read signature
+            if errorChecking:
+                signature = self.readField(4)
+                if signature != self.H5_OCHK_SIGNATURE_LE:
+                    raise FatalError(f'invalid header continuation signature: {signature}')
+            else:
+                self.pos += 4
+
+            # read continuation header messages
+            end_of_chdr = hc_offset + hc_length - 4 # leave 4 bytes for checksum below
+            self.pos += self.readMessages (end_of_chdr, obj_hdr_flags)
+
+            # skip checksum
+            self.pos += 4
+
+        # return bytes read
+        bytes_read = self.resourceObject.offsetSize + self.resourceObject.lengthSize
+        self.pos = return_position + bytes_read
+        return bytes_read
 
     #######################
     # symboltableMsgHandler
     #######################
     def symboltableMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        starting_position   = self.pos
+        btree_addr          = self.readField(self.resourceObject.offsetSize)
+        heap_addr           = self.readField(self.resourceObject.offsetSize)
+        return_position     = self.pos
+
+        if verbose:
+            logger.info(f'Symbol Table Message [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'B-Tree Address:       {btree_addr}')
+            logger.info(f'Heap Address:         {heap_addr}')
+
+        # read heap info
+        self.pos = heap_addr
+        if errorChecking:
+            signature = self.readField(4)
+            version = self.readField(1)
+            if signature != self.H5_HEAP_SIGNATURE_LE:
+                raise FatalError(f'invalid heap signature: {signature}')
+            if version != 0:
+                raise FatalError(f'unsupported version of heap: {version}')
+            self.pos += 19
+        else:
+            self.pos += 24
+        head_data_addr = self.readField(self.resourceObject.offsetSize)
+
+        # go to left-most node
+        self.pos = btree_addr
+        while True:
+            # read header info
+            if errorChecking:
+                signature = self.readField(4)
+                node_type = self.readField(1)
+                if signature != self.H5_TREE_SIGNATURE_LE:
+                    raise FatalError(f'invalid group b-tree signature: {signature}')
+                if node_type != 0:
+                    raise FatalError(f'only group b-trees supported: {node_type}')
+            else:
+                self.pos += 5
+
+            # read branch info
+            node_level = self.readField(1)
+            if node_level == 0:
+                break
+            else:
+                self.pos += 2 + (2 * self.resourceObject.offsetSize) + self.resourceObject.lengthSize # skip entries used, sibling addresses, and first key
+                self.pos = self.readField(self.resourceObject.offsetSize) # read and go to first child
+
+        # traverse children left to right */
+        while True:
+            entries_used    = self.readField(2)
+            left_sibling    = self.readField(self.resourceObject.offsetSize)
+            right_sibling   = self.readField(self.resourceObject.offsetSize)
+            key0            = self.readField(self.resourceObject.lengthSize)
+            if verbose:
+                logger.info(f'Entries Used:         {entries_used}')
+                logger.info(f'Left Sibling:         {left_sibling}')
+                logger.info(f'Right Sibling:        {right_sibling}')
+                logger.info(f'First Key:            {key0}')
+
+            # loop through entries in current node
+            for _ in range(entries_used):
+                symbol_table_addr = self.readField(self.resourceObject.offsetSize)
+                current_node_pos = self.pos
+                self.pos = symbol_table_addr
+                self.readSymbolTable(head_data_addr)
+                self.pos = current_node_pos
+                self.pos += self.resourceObject.lengthSize # skip next key
+                if self.datasetFound:
+                    break
+
+            # exit loop or go to next node
+            if (right_sibling == INVALID_VALUE[self.resourceObject.offsetSize]) or self.datasetFound:
+                break
+            else:
+                self.pos = right_sibling
+
+            # read header info
+            if errorChecking:
+                signature = self.readField(4)
+                node_type = self.readField(1)
+                node_level = self.readField(1)
+                if signature != self.H5_TREE_SIGNATURE_LE:
+                    raise FatalError(f'invalid group b-tree signature: {signature}')
+                if node_type != 0:
+                    raise FatalError(f'only group b-trees supported: {node_type}')
+                if node_level != 0:
+                    raise FatalError(f'traversed to non-leaf node: {node_level}')
+            else:
+                self.pos += 6
+
+        # return bytes read
+        bytes_read = self.resourceObject.offsetSize + self.resourceObject.lengthSize
+        self.pos = return_position + bytes_read
+        return bytes_read
 
     #######################
     # attributeinfoMsgHandler
     #######################
     def attributeinfoMsgHandler(self, msg_size, obj_hdr_flags):
-        return msg_size
+        MAX_CREATE_PRESENT_BIT      = 0x01
+        CREATE_ORDER_PRESENT_BIT    = 0x02
+        starting_position           = self.pos
+        version                     = self.readField(1)
+        flags                       = self.readField(1)
+
+        if errorChecking and (version != 0):
+            raise FatalError(f'unsupported link info version: {version}')
+
+        if verbose:
+            logger.info(f'Attribute Info [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Version:              {version}')
+            logger.info(f'Flags:                {flags}')
+
+        # read maximum creation index (number of elements in group)
+        if flags & MAX_CREATE_PRESENT_BIT:
+            max_create_index = self.readField(2)
+            if verbose:
+                logger.info(f'Max Creation Index:   {max_create_index}')
+
+        # read heap and name offsets
+        heap_address    = self.readField(self.resourceObject.offsetSize)
+        name_index      = self.readField(self.resourceObject.offsetSize)
+        if verbose:
+            logger.info(f'Heap Address:         {heap_address}')
+            logger.info(f'Name Index:           {name_index}')
+
+        # read creation order index
+        if flags & CREATE_ORDER_PRESENT_BIT:
+            create_order_index = self.readField(self.resourceObject.offsetSize)
+            if verbose:
+                logger.info(f'Creation Order Index: {create_order_index}')
+
+        # follow heap address if provided */
+        if heap_address == INVALID_VALUE[self.resourceObject.offsetSize]:
+            self.readFractalHeap(self.ATTRIBUTE_MSG, heap_address, obj_hdr_flags)
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # readFractalHeap
@@ -815,6 +1133,11 @@ class H5Dataset:
     def readFractalHeap(self, msg_type, heap_address, obj_hdr_flags):
         pass
 
+    #######################
+    # readSymbolTable
+    #######################
+    def readSymbolTable(self, heap_address):
+        pass
 
 ###############################################################################
 # H5Coro Class
