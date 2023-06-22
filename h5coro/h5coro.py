@@ -1128,16 +1128,121 @@ class H5Dataset:
         return self.pos - starting_position
 
     #######################
+    # readSymbolTable
+    #######################
+    def readSymbolTable(self, heap_address):
+        starting_position = self.pos
+
+        # check signature and version
+        if errorChecking:
+            signature = self.readField(4)
+            version = self.readField(1)
+            if signature != self.H5_SNOD_SIGNATURE_LE:
+                raise FatalError(f'invalid symbol table signature: {signature}')
+            if version != 1:
+                raise FatalError(f'incorrect version of symbole table: {version}')
+            self.pos += 1
+        else:
+            self.pos += 6
+
+        # display
+        if verbose:
+            logger.info(f'Symbol Table [{self.datasetLevel}] @{self.pos}')
+
+        # read symbols
+        num_symbols = self.readField(2)
+        for _ in range(num_symbols):
+            # read symbol entry
+            link_name_offset    = self.readField(self.resourceObject.offsetsize)
+            obj_hdr_addr        = self.readField(self.resourceObject.offsetsize)
+            cache_type          = self.readField(4)
+            self.pos += 20 # reserved + scratch pad
+
+            # read link name
+            return_position = self.pos
+            link_name_addr = heap_address + link_name_offset
+            self.pos = link_name_addr
+            link_name_chars = []
+            while True:
+                c = self.readArray(1).decode('utf-8')
+                if c == '\0':
+                    break
+                link_name_chars.append(c)
+            link_name = ''.join(link_name_chars)
+            self.pos = return_position
+
+            # display
+            if verbose:
+                logger.info(f'Link Name:            {link_name}')
+                logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
+
+            # process link
+            return_position = self.pos
+            if link_name == self.datasetPath[self.datasetLevel]:
+                if cache_type == 2:
+                    raise FatalError(f'symbolic links are unsupported: {link_name}')
+                self.datasetLevel += 1
+                self.readObjHdr(obj_hdr_addr)
+                self.datasetFound = True
+                self.pos = return_position
+                break
+
+        # return bytes read
+        return self.pos - starting_position
+
+    #######################
     # readFractalHeap
     #######################
     def readFractalHeap(self, msg_type, heap_address, obj_hdr_flags):
         pass
 
     #######################
-    # readSymbolTable
+    # readDirectBlock
     #######################
-    def readSymbolTable(self, heap_address):
+    def readDirectBlock(self, heap_info, block_size, obj_hdr_flags):
         pass
+
+    #######################
+    # readIndirectBlock
+    #######################
+    def readIndirectBlock(self, heap_info, block_size, obj_hdr_flags):
+        pass
+
+    #######################
+    # readBTreeV1
+    #######################
+    def readBTreeV1(self, buffer, buffer_offset):
+        pass
+
+    #######################
+    # readBTreeNodeV1
+    #######################
+    def readBTreeNodeV1(self, ndims):
+        pass
+
+    #######################
+    # inflateChunk
+    #######################
+    def inflateChunk(self, input, output):
+        pass
+
+    #######################
+    # inflateChunk
+    #######################
+    def inflateChunk(self, input, output, output_offset, type_size):
+        pass
+
+    #######################
+    # highestBit
+    #######################
+    def highestBit(self, value):
+        bit = 0
+        value >>= 1
+        while value != 0:
+            value >>= 1
+            bit += 1
+        return bit
+
 
 ###############################################################################
 # H5Coro Class
