@@ -103,7 +103,6 @@ class H5Dataset:
     #######################
     # local
     CUSTOM_V1_FLAG          = 0x80
-    FILTER_SIZE_SCALE       = 1 # maximum factor for dataChunkFilterBuffer
     ALL_ROWS                = -1
     MAX_NDIMS               = 2
     FLAT_NDIMS              = 3
@@ -152,7 +151,34 @@ class H5Dataset:
     SZIP_FILTER             = 4
     NBIT_FILTER             = 5
     SCALEOFFSET_FILTER      = 6
-
+    # data type conversion
+    TO_DATATYPE = {
+        FIXED_POINT_TYPE: {
+            True: {
+                1:  numpy.int8,
+                2:  numpy.int16,
+                4:  numpy.int32,
+                8:  numpy.int64
+            },
+            False: {
+                1:  numpy.uint8,
+                2:  numpy.uint16,
+                4:  numpy.uint32,
+                8:  numpy.uint64
+            }
+        },
+        FLOATING_POINT_TYPE: {
+            True: {
+                4:  numpy.single,
+                8:  numpy.double
+            }
+        },
+        STRING_TYPE: {
+            True: {
+                1:  numpy.byte
+            }
+        }
+    }
 
     #######################
     # Constructor
@@ -163,15 +189,16 @@ class H5Dataset:
         self.credentials            = credentials
         self.datasetStartRow        = 0
         self.datasetNumRows         = self.ALL_ROWS
+        self.metaOnly               = False
         self.pos                    = self.resourceObject.rootAddress
         self.datasetPath            = dataset.split('/')
         self.datasetLevel           = 0
         self.datasetFound           = False
         self.ndims                  = None
         self.dimensions             = []
-        self.typesize               = 0
+        self.typeSize               = 0
         self.type                   = None
-        self.signedval              = False
+        self.signedval              = True
         self.fillsize               = 0
         self.fillvalue              = None
         self.layout                 = None
@@ -180,8 +207,7 @@ class H5Dataset:
         self.chunkElements          = 0
         self.chunkDimensions        = []
         self.elementSize            = 0
-        self.dataChunkBuffer        = []
-        self.dataChunkFilterBuffer  = []
+        self.dataChunkBufferSize    = []
         self.filter                 = {
             self.DEFLATE_FILTER:        False,
             self.SHUFFLE_FILTER:        False,
@@ -211,7 +237,170 @@ class H5Dataset:
     # readDataset
     #######################
     def readDataset(self):
+        result = {}
+
+        # traverse file for dataset
+        #
+        #   ... here is where we can check self cache for
+        #       group info and jump right to it
         self.readObjHdr()
+
+        # sanity check data attrbutes
+        if self.typeSize <= 0:
+            raise FatalError(f'missing data type information')
+        elif self.ndims == None:
+            raise FatalError(f'missing data dimension information')
+        elif self.address == INVALID_VALUE[self.resourceObject.offsetSize]:
+            raise FatalError(f'invalid data address')
+
+        # populate type size
+        result['typesize'] = self.typeSize
+
+        # calculate size of data row (note dimension starts at 1)
+        row_size = self.typeSize
+        for d in range(1, self.ndims):
+            row_size *= self.dimensions[d]
+
+        # get number of rows
+        first_dimension = (self.ndims > 0) and self.dimensions[0] or 1
+        self.datasetNumRows = (self.datasetNumRows == self.ALL_ROWS) and first_dimension or self.datasetNumRows
+        if (self.datasetStartRow + self.datasetNumRows) > first_dimension:
+            raise FatalError(f'read exceeds number of rows: {self.datasetStartRow} + {self.datasetNumRows} > {first_dimension}')
+
+        # calculate size of buffer
+        buffer_size = row_size * self.datasetNumRows
+
+        # allocate and initialize buffer
+        if not self.metaOnly and (buffer_size > 0):
+            # allocate buffer if chunked layout
+            if self.layout == self.CHUNKED_LAYOUT:
+                buffer = numpy.empty(buffer_size, dtype=numpy.byte)
+                # fill buffer with fill value (if provided)
+                if self.fillsize > 0:
+                    fill_value = numpy.frombuffer(numpy.array([self.fill]).tobytes()[:self.fillsize], dtype=numpy.byte)
+                    for i in range(0, buffer_size, self.fillsize):
+                        buffer[i:i+self.fillsize] = fill_value
+
+        # populate result
+        result['elements']  = buffer_size / self.typeSize
+        result['datasize']  = buffer_size
+        result['data']      = buffer
+        result['numrows']   = self.datasetNumRows
+
+        # set number of columns
+        if self.ndims == 0:
+            result['numcols'] = 0
+        elif self.ndims == 1:
+            result['numcols'] = 1
+        elif self.ndims >= 2:
+            result['numcols'] = self.dimensions[1]
+
+        # set data type
+        try:
+            result['datatype'] = self.TO_DATATYPE[self.type][self.signedval][self.typeSize]
+        except Exception as e:
+            raise FatalError(f'unable to set data type: {e}')
+
+        # calculate buffer start */
+        buffer_offset = row_size * self.datasetStartRow
+
+        # check if data address and data size is valid
+        if errorChecking:
+            if (self.size != 0) and (self.size < (buffer_offset + buffer_size)):
+                raise FatalError(f'read exceeds available data: {self.size} < {buffer_offset} + {buffer_size}')
+            if (self.filter[self.DEFLATE_FILTER] or self.filter[self.SHUFFLE_FILTER]) and \
+               ((self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT)):
+                raise FatalError(f'filters unsupported on non-chunked layouts')
+
+        # read dataset
+        if not self.metaOnly and (buffer_size > 0):
+            if (self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT):
+                data_addr = self.address + buffer_offset
+                buffer = self.ioRequest(data_addr, buffer_size)
+            elif self.layout == self.CHUNKED_LAYOUT:
+                # chunk layout specific error checks
+                if errorChecking:
+                    if self.elementSize != self.typeSize:
+                        raise FatalError(f'chunk element size does not match data element size: {self.elementSize} !=  {self.typeSize}')
+                    elif self.chunkElements <= 0:
+                        raise FatalError(f'invalid number of chunk elements: {self.chunkElements}')
+
+                # calculate data chunk buffer size
+                self.dataChunkBufferSize = self.chunkElements * self.typeSize
+
+                # read b-tree
+                self.readBTreeV1(self.address, buffer, buffer_offset)
+
+                # check need to flatten chunks
+                flatten = False
+                for d in range(1, self.ndims):
+                    if self.chunkDimensions[d] != self.dimensions[d]:
+                        flatten = True
+                        break
+
+                # flatten chunks - place dataset in row order
+                if flatten:
+                    # new flattened buffer
+                    fbuf = numpy.empty(buffer_size, dtype=numpy.byte)
+                    bi = 0 # index into source buffer
+
+                    # build number of each chunk per dimension
+                    cdimnum = [0 for _ in range(self.MAX_NDIMS * 2)]
+                    for i in range(self.ndims):
+                        cdimnum[i] = self.dimensions[i] / self.chunkDimensions[i]
+                        cdimnum[i + self.ndims] = self.chunkDimensions[i]
+
+                    # build size of each chunk per flattened dimension
+                    cdimsizes = [0 for _ in range(self.FLAT_NDIMS)]
+                    cdimsizes[0] = self.chunkDimensions[0] * self.typeSize  # number of chunk rows
+                    for i in range(1, self.ndims):
+                        cdimsizes[0] *= cdimnum[i]                          # number of columns of chunks
+                        cdimsizes[0] *= self.chunkDimensions[i]             # number of columns in chunks
+                    cdimsizes[1] = self.typeSize
+                    for i in range(1, self.ndims):
+                        cdimsizes[1] *= self.chunkDimensions[i]             # number of columns in chunks
+                    cdimsizes[2] = self.typeSize
+                    for i in range(1, self.ndims):
+                        cdimsizes[2] *= cdimnum[i]                          # number of columns of chunks
+                        cdimsizes[2] *= self.chunkDimensions[i]             # number of columns in chunks
+
+                    # initialize loop variables
+                    ci = self.FLAT_NDIMS - 1;                               # chunk dimension index
+                    dimi = [0 for _ in range(self.MAX_NDIMS * 2)]           # chunk dimension indices
+
+                    # loop through each chunk
+                    while True:
+                        # calculate start position
+                        start = 0
+                        for i in range(self.FLAT_NDIMS):
+                            start += dimi[i] * cdimsizes[i]
+
+                        # copy into new buffer
+                        for k in range(cdimsizes[1]):
+                            fbuf[start + k] = buffer[bi]
+                            bi += 1
+
+                        # update indices
+                        dimi[ci] += 1
+                        while dimi[ci] == cdimnum[ci]:
+                            dimi[ci] = 0
+                            ci -= 1
+                            if ci < 0:
+                                break
+                            else:
+                                dimi[ci] += 1
+
+                        # check exit condition
+                        if ci < 0:
+                            break
+                        else:
+                            ci = self.FLAT_NDIMS - 1
+
+                    # replace buffer
+                    result['data'] = fbuf
+
+            elif errorChecking:
+                raise FatalError(f'invalid data layout: {self.layout}')
 
     #######################
     # readObjHdr
@@ -514,7 +703,7 @@ class H5Dataset:
     def datatypeMsgHandler(self, msg_size, obj_hdr_flags):
         starting_position           = self.pos
         version_class               = self.readField(4)
-        self.typesize               = self.readField(4)
+        self.typeSize               = self.readField(4)
         version                     = (version_class & 0xF0) >> 4
         databits                    = version_class >> 8
         self.type                   = version_class & 0x0F
@@ -527,7 +716,7 @@ class H5Dataset:
         if verbose:
             logger.info(f'Data Type Message [{self.datasetLevel}] @{self.pos}')
             logger.info(f'Version:              {version}')
-            logger.info(f'Type Size:            {self.typesize}')
+            logger.info(f'Type Size:            {self.typeSize}')
             logger.info(f'Data Type:            {self.type}')
             logger.info(f'Signed:               {self.signedval}')
 
@@ -607,6 +796,8 @@ class H5Dataset:
             # self.pos += self.datatypeMsgHandler(msg_size, obj_hdr_flags)
         # String
         elif self.type == self.STRING_TYPE:
+            self.typeSize = 1
+            self.signedval = True
             if verbose:
                 padding = databits & 0x0F
                 charset = (databits & 0xF0) >> 4
@@ -1538,7 +1729,7 @@ class H5Dataset:
                     # calculate chunk location
                     chunk_offset = 0
                     for i in range(self.ndims):
-                        slice_size = curr_node['slice'][i] * self.typesize
+                        slice_size = curr_node['slice'][i] * self.typeSize
                         for k in range(i):
                             slice_size *= self.chunkDimensions[k]
                         for j in range(i + 1, self.ndims):
@@ -1556,11 +1747,11 @@ class H5Dataset:
                     chunk_index = 0
                     if buffer_offset > chunk_offset:
                         chunk_index = buffer_offset - chunk_offset
-                        if chunk_index >= len(self.dataChunkBuffer):
+                        if chunk_index >= self.dataChunkBufferSize:
                             raise FatalError (f'invalid location to read chunk: {chunk_offset}, {buffer_offset}')
 
                     # calculate chunk bytes - number of bytes to read from chunk buffer
-                    chunk_bytes = len(self.dataChunkBuffer) - chunk_index
+                    chunk_bytes = self.dataChunkBufferSize - chunk_index
                     if chunk_bytes < 0:
                         raise FatalError(f'no bytes of chunk data to read: {chunk_bytes}, {chunk_index}')
                     elif (buffer_index + chunk_bytes) > len(buffer):
@@ -1568,37 +1759,44 @@ class H5Dataset:
 
                     # display
                     if verbose:
-                        logger.debug(f'Chunk Offset:         {chunk_offset} ({chunk_offset/self.typesize})')
-                        logger.debug(f'Buffer Index:         {buffer_index} ({buffer_index/self.typesize})')
-                        logger.debug(f'Buffer Bytes:         {chunk_bytes} ({chunk_bytes/self.typesize})')
+                        logger.debug(f'Chunk Offset:         {chunk_offset} ({chunk_offset/self.typeSize})')
+                        logger.debug(f'Buffer Index:         {buffer_index} ({buffer_index/self.typeSize})')
+                        logger.debug(f'Buffer Bytes:         {chunk_bytes} ({chunk_bytes/self.typeSize})')
 
                     # read chunk
                     if self.filter[self.DEFLATE_FILTER]:
-                        # check current node chunk size
-                        if curr_node['chunk_size'] > (len(self.dataChunkBuffer) * self.FILTER_SIZE_SCALE):
-                            raise FatalError(f'Compressed chunk size exceeds buffer: {curr_node["chunk_size"]}, {len(self.dataChunkBuffer)}')
+
                         # read data into chunk filter buffer (holds the compressed data)
-                        self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
-                        if (chunk_bytes == len(self.dataChunkBuffer)) and (not self.filter[self.SHUFFLE_FILTER]):
-                            # inflate directly into data buffer
-                            self.inflateChunk(self.dataChunkFilterBuffer, curr_node['chunk_size'], &buffer[buffer_index], chunk_bytes)
+                        self.dataChunkFilterBuffer = numpy.frombuffer(self.resourceObject.ioRequest(child_addr, curr_node['chunk_size']), dtype=numpy.byte)
+
+                        # inflate directly into data buffer
+                        if (chunk_bytes == self.dataChunkBufferSize) and (not self.filter[self.SHUFFLE_FILTER]):
+                             buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer, chunk_bytes)
+
+                        # inflate into data chunk buffer */
                         else:
-                            # inflate into data chunk buffer */
-                            self.inflateChunk(self.dataChunkFilterBuffer, curr_node['chunk_size'], self.dataChunkBuffer)
+                            self.dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer, self.dataChunkBufferSize)
+
+                            # shuffle data chunk buffer into data buffer
                             if self.filter[self.SHUFFLE_FILTER]:
-                                # shuffle data chunk buffer into data buffer
-                                self.shuffleChunk(self.dataChunkBuffer, &buffer[buffer_index], chunk_index, chunk_bytes, self.typesize)
+                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(self.dataChunkBuffer, chunk_index, chunk_bytes, self.typeSize)
+
+                            # copy data chunk buffer into data buffer
                             else:
-                                # copy data chunk buffer into data buffer
-                                memcpy(&buffer[buffer_index], &dataChunkBuffer[chunk_index], chunk_bytes);
+                                buffer[buffer_index:buffer_index+chunk_bytes] = dataChunkBuffer[chunk_index:chunk_index+chunk_bytes]
+
+                    # check filter options
                     elif errorChecking and self.filter[self.SHUFFLE_FILTER]:
                         raise FatalError(f'shuffle filter unsupported on uncompressed chunk')
-                    elif errorChecking and (len(self.dataChunkBuffer) != curr_node['chunk_size']):
-                        raise FatalError(f'mismatch in chunk size: {curr_node["chunk_size"]}, {len(self.dataChunkBuffer)}')
+
+                    # check buffer sizes
+                    elif errorChecking and (self.dataChunkBufferSize != curr_node['chunk_size']):
+                        raise FatalError(f'mismatch in chunk size: {curr_node["chunk_size"]}, {self.dataChunkBufferSize}')
+
+                    # read data into data buffer
                     else:
-                        # read data into data buffer
                         chunk_offset_addr = child_addr + chunk_index
-                        &buffer[buffer_index] = ioRequest(chunk_offset_addr, chunk_bytes)
+                        buffer[buffer_index:buffer_index+chunk_bytes] = numpy.frombuffer(self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes), dtype=numpy.byte)
 
             # goto next key
             curr_node = next_node
@@ -1617,7 +1815,7 @@ class H5Dataset:
 
         # read trailing zero
         trailing_zero = self.readField(8)
-        if errorChecking and (trailing_zero % self.typesize != 0):
+        if errorChecking and (trailing_zero % self.typeSize != 0):
             raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
 
         # set node key
@@ -1627,7 +1825,7 @@ class H5Dataset:
             node['row_key'] = 0
 
         # return copy of node
-        return node;
+        return node
 
     #######################
     # inflateChunk
