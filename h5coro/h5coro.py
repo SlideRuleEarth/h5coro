@@ -32,6 +32,7 @@ import threading
 import struct
 import logging
 import numpy
+import zlib
 from datetime import datetime
 
 ###############################################################################
@@ -1830,14 +1831,26 @@ class H5Dataset:
     #######################
     # inflateChunk
     #######################
-    def inflateChunk(self, input, output):
-        pass
+    def inflateChunk(self, input, output_size):
+        return zlib.decompress(input)
 
     #######################
     # shuffleChunk
     #######################
-    def shuffleChunk(self, input, output, output_offset, type_size):
-        pass
+    def shuffleChunk(self, input, output_offset, output_size, type_size):
+        if errorChecking and (type_size < 0 or type_size > 8):
+            raise FatalError(f'invalid data size to perform shuffle on: {type_size}')
+        output = numpy.empty(output_size, dtype=numpy.byte)
+        dst_index = 0
+        shuffle_block_size = len(input) / type_size
+        num_elements = output_size / type_size
+        start_element = output_offset / type_size
+        for element_index in range(start_element, start_element + num_elements):
+            for val_index in range(0, type_size):
+                src_index = (val_index * shuffle_block_size) + element_index
+                output[dst_index] = input[src_index]
+                dst_index += 1
+        return output
 
     #######################
     # highestBit
@@ -1849,7 +1862,6 @@ class H5Dataset:
             value >>= 1
             bit += 1
         return bit
-
 
 ###############################################################################
 # H5Coro Class
