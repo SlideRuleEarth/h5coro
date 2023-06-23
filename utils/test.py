@@ -2,6 +2,8 @@ import logging
 import h5coro
 from h5coro import filedriver
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(created)f %(levelname)s [%(filename)s:%(lineno)d] %(message)s')
 
-h5obj = h5coro.H5Coro("/data/GEDI/GEDI02_A_2020243072712_O09719_01_T09028_02_003_01_V002.h5", filedriver.FileDriver)
+h5obj = h5coro.H5Coro("/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5", filedriver.FileDriver, datasets=['/gt2l/heights/h_ph'])
+
+print(h5obj.datasets)

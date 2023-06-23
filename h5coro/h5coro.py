@@ -28,6 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import requests
+import concurrent.futures
 import threading
 import struct
 import logging
@@ -85,12 +86,6 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 class FatalError(RuntimeError):
-    pass
-
-class CompatibilityError(FatalError):
-    pass
-
-class ParsingError(FatalError):
     pass
 
 ###############################################################################
@@ -403,6 +398,9 @@ class H5Dataset:
             elif errorChecking:
                 raise FatalError(f'invalid data layout: {self.layout}')
 
+        # return result of reading dataset back to caller
+        return self.dataset, result
+
     #######################
     # readObjHdr
     #######################
@@ -419,7 +417,10 @@ class H5Dataset:
     # readObjHdrV0
     #######################
     def readObjHdrV0(self):
-        starting_position = self.pos
+        FILE_STATS_BIT          = 0x20
+        STORE_CHANGE_PHASE_BIT  = 0x10
+        SIZE_OF_CHUNK_0_MASK    = 0x3
+        starting_position       = self.pos
 
         # check signature and version
         if errorChecking:
@@ -433,7 +434,6 @@ class H5Dataset:
             self.pos += 5
 
         # file stats
-        FILE_STATS_BIT = 0x20
         obj_hdr_flags = self.readField(1)
         if obj_hdr_flags & FILE_STATS_BIT:
             if verbose:
@@ -450,7 +450,6 @@ class H5Dataset:
                 self.pos += 16
 
         # phase attributes
-        STORE_CHANGE_PHASE_BIT = 0x10
         if obj_hdr_flags & STORE_CHANGE_PHASE_BIT:
             if verbose:
                 max_compact_attr = self.readField(2)
@@ -461,7 +460,6 @@ class H5Dataset:
                 self.pos += 4
 
         # read header messages
-        SIZE_OF_CHUNK_0_MASK = 0x3
         size_of_chunk0 = self.readField(1 << (obj_hdr_flags & SIZE_OF_CHUNK_0_MASK))
         end_of_hdr = self.pos + size_of_chunk0
         self.pos += self.readMessagesV0(end_of_hdr, obj_hdr_flags)
@@ -476,7 +474,9 @@ class H5Dataset:
     # readMessagesV0
     #######################
     def readMessagesV0(self, end_of_hdr, obj_hdr_flags):
-        starting_position = self.pos
+        ATTR_CREATION_TRACK_BIT = 0x4
+        starting_position       = self.pos
+
         while self.pos < end_of_hdr:
             # read message info
             msg_type = self.readField(1)
@@ -484,7 +484,6 @@ class H5Dataset:
             msg_flags = self.readField(1)
 
             # read messag order
-            ATTR_CREATION_TRACK_BIT = 0x4
             if obj_hdr_flags & ATTR_CREATION_TRACK_BIT:
                 msg_order = self.readField(2)
 
@@ -830,20 +829,20 @@ class H5Dataset:
     # fillvalueMsgHandler
     #######################
     def fillvalueMsgHandler(self, msg_size, obj_hdr_flags):
-        FILL_VALUE_DEFINED = 0x20
-        starting_position = self.pos
-
-        version = self.readField(1)
+        FILL_VALUE_DEFINED  = 0x20
+        starting_position   = self.pos
+        version             = self.readField(1)
 
         # check version
         if errorChecking and (version != 2) and (version != 3):
             raise FatalError(f'invalid fill value version: {version}')
 
+        # display
         if verbose:
             logger.info(f'Fill Value Message [{self.datasetLevel}] @{self.pos}')
             logger.info(f'Version:              {version}')
 
-        # Version 2
+        # version 2
         if version == 2:
             if verbose:
                 space_allocation_time = self.readField(1)
@@ -858,7 +857,7 @@ class H5Dataset:
                 self.fillsize = self.readField(4)
                 if self.fillsize > 0:
                     self.fillvalue = self.readField(self.fillsize)
-        # Version 3
+        # version 3
         else:
             flags = self.readField(1)
             if verbose:
@@ -868,6 +867,7 @@ class H5Dataset:
                 self.fillsize = self.readField(4)
                 self.fillvalue = self.readField(self.fillsize)
 
+        # display
         if verbose:
             logger.info(f'Fill Value Size:      {self.fillsize}')
             logger.info(f'Fill Value:           {self.fillvalue}')
@@ -1005,7 +1005,7 @@ class H5Dataset:
                     self.chunkElements *= chunk_dimension
             # read element size
             self.elementSize = self.readField(4)
-            # verbose
+            # display
             if verbose:
                 logger.info(f'Element Size:         {self.elementSize}')
                 logger.info(f'# Chunked Dimensions: {chunk_num_dim}')
@@ -1014,7 +1014,7 @@ class H5Dataset:
         elif errorChecking:
             raise FatalError(f'unsupported data layout: {self.layout}')
 
-        # verbose
+        # display
         if verbose:
             logger.info(f'Dataset Size:         {self.size}')
             logger.info(f'Dataset Address:      {self.address}')
@@ -1715,7 +1715,7 @@ class H5Dataset:
                 logger.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
                 logger.debug(f'CFilter Mask:         {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
                 logger.debug(f'Data Key:             {child_key1} | {child_key2}')
-                logger.debug(f'Slice:                {' '.join([str(d) for d in curr_node['slice']])}')
+                logger.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
                 logger.debug(f'Child Address:        {child_addr}')
 
             # check inclusion
@@ -1864,6 +1864,17 @@ class H5Dataset:
         return bit
 
 ###############################################################################
+# H5Coro Functions
+###############################################################################
+
+def workerThread(worker):
+    try:
+        return worker.readDataset()
+    except FatalError as e:
+        logger.error(f'H5Coro encountered an error processing {worker.resourceObject.resource}/{worker.dataset}: {e}')
+        return '',{}
+
+###############################################################################
 # H5Coro Class
 ###############################################################################
 
@@ -1891,12 +1902,14 @@ class H5Coro:
         self.baseAddress = 0
         self.rootAddress = self.readSuperblock()
 
-        workers = []
-        for dataset in datasets:
-            worker = H5Dataset(self, dataset, credentials)
-            thread = threading.Thread(target=worker.readDataset, daemon=True)
-            workers.append(thread)
-            thread.start()
+        self.datasets = {}
+        if len(datasets) > 0:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasets)) as executor:
+                workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
+                futures = [executor.submit(workerThread, worker) for worker in workers]
+                for future in concurrent.futures.as_completed(futures):
+                    dataset, result = future.result()
+                    self.datasets[dataset] = result
 
     #######################
     # ioRequest
@@ -1989,11 +2002,11 @@ class H5Coro:
 
         # print file information
         if verbose:
-            logger.info(f'File Information @{root_group_offset}')
+            logger.info(f'File Information @0x{root_group_offset:x}')
             logger.info(f'Size of Offsets:      {self.offsetSize}')
             logger.info(f'Size of Lengths:      {self.lengthSize}')
             logger.info(f'Base Address:         {self.baseAddress}')
-            logger.info(f'Root Group Offset:    {root_group_offset}')
+            logger.info(f'Root Group Offset:    0x{root_group_offset:x}')
 
         # return root group offset
         return root_group_offset
