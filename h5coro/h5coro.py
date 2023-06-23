@@ -86,6 +86,12 @@ logger = logging.getLogger(__name__)
 class FatalError(RuntimeError):
     pass
 
+class CompatibilityError(FatalError):
+    pass
+
+class ParsingError(FatalError):
+    pass
+
 ###############################################################################
 # H5Dataset Class
 ###############################################################################
@@ -96,7 +102,11 @@ class H5Dataset:
     # Constants
     #######################
     # local
-    H5CORO_CUSTOM_V1_FLAG   = 0x80
+    CUSTOM_V1_FLAG          = 0x80
+    FILTER_SIZE_SCALE       = 1 # maximum factor for dataChunkFilterBuffer
+    ALL_ROWS                = -1
+    MAX_NDIMS               = 2
+    FLAT_NDIMS              = 3
     # signatures
     H5_OHDR_SIGNATURE_LE    = 0x5244484F
     H5_FRHP_SIGNATURE_LE    = 0x50485246
@@ -106,10 +116,6 @@ class H5Dataset:
     H5_TREE_SIGNATURE_LE    = 0x45455254
     H5_HEAP_SIGNATURE_LE    = 0x50414548
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
-    # dimensions
-    ALL_ROWS                = -1
-    MAX_NDIMS               = 2
-    FLAT_NDIMS              = 3
     # datatypes
     FIXED_POINT_TYPE        = 0
     FLOATING_POINT_TYPE     = 1
@@ -139,6 +145,14 @@ class H5Dataset:
     HEADER_CONT_MSG         = 0x10
     SYMBOL_TABLE_MSG        = 0x11
     ATTRIBUTE_INFO_MSG      = 0x15
+    # filters
+    DEFLATE_FILTER          = 1
+    SHUFFLE_FILTER          = 2
+    FLETCHER32_FILTER       = 3
+    SZIP_FILTER             = 4
+    NBIT_FILTER             = 5
+    SCALEOFFSET_FILTER      = 6
+
 
     #######################
     # Constructor
@@ -147,6 +161,8 @@ class H5Dataset:
         self.resourceObject         = resourceObject
         self.dataset                = dataset
         self.credentials            = credentials
+        self.datasetStartRow        = 0
+        self.datasetNumRows         = self.ALL_ROWS
         self.pos                    = self.resourceObject.rootAddress
         self.datasetPath            = dataset.split('/')
         self.datasetLevel           = 0
@@ -164,13 +180,15 @@ class H5Dataset:
         self.chunkElements          = 0
         self.chunkDimensions        = []
         self.elementSize            = 0
+        self.dataChunkBuffer        = []
+        self.dataChunkFilterBuffer  = []
         self.filter                 = {
-            1:  False, # deflate
-            2:  False, # shuffle
-            3:  False, # fletcher32
-            4:  False, # szip
-            5:  False, # nbit
-            6:  False  # scaleoffset
+            self.DEFLATE_FILTER:        False,
+            self.SHUFFLE_FILTER:        False,
+            self.FLETCHER32_FILTER:     False,
+            self.SZIP_FILTER:           False,
+            self.NBIT_FILTER:           False,
+            self.SCALEOFFSET_FILTER:    False
         }
 
     #######################
@@ -212,13 +230,13 @@ class H5Dataset:
     #######################
     def readObjHdrV0(self):
         starting_position = self.pos
+
+        # check signature and version
         if errorChecking:
-            # check header signature
             signature = self.readField(4)
+            version = self.readField(1)
             if signature != self.H5_OHDR_SIGNATURE_LE:
                 raise FatalError(f'invalid version 0 object header signature: {signature}')
-            # check header version
-            version = self.readField(1)
             if version != 2:
                 raise FatalError(f'unsupported header version: {version}')
         else:
@@ -305,14 +323,7 @@ class H5Dataset:
     #######################
     def readObjHdrV1(self):
         starting_position = self.pos
-
-        if errorChecking:
-            # read reserved field
-            reserved0 = self.readField(1)
-            if reserved0 != 0:
-                raise FatalError(f'reserved field not zero: {reserved0}')
-        else:
-            self.pos += 1
+        self.pos += 1 # reserved field
 
         if verbose:
             # read number of header messages
@@ -331,7 +342,7 @@ class H5Dataset:
         end_of_hdr = self.pos + obj_hdr_size
 
         # read header messages
-        self.pos += self.readMessagesV1(end_of_hdr, self.H5CORO_CUSTOM_V1_FLAG)
+        self.pos += self.readMessagesV1(end_of_hdr, self.CUSTOM_V1_FLAG)
 
         # return bytes read
         ending_position = self.pos
@@ -420,6 +431,7 @@ class H5Dataset:
         flags              = self.readField(1)
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
+        # check version and flags and dimenstionality
         if errorChecking:
             if version != 1 or version != 2:
                 raise FatalError(f'unsupported dataspace version: {version}')
@@ -461,9 +473,9 @@ class H5Dataset:
         version                     = self.readField(1)
         flags                       = self.readField(1)
 
-        if errorChecking:
-            if version != 0:
-                raise FatalError(f'unsupported link info version: {version}')
+        # check version
+        if errorChecking and (version != 0):
+            raise FatalError(f'unsupported link info version: {version}')
 
         if verbose:
             logger.info(f'Link Information Message [{self.datasetLevel}] @{self.pos}')
@@ -508,6 +520,7 @@ class H5Dataset:
         self.type                   = version_class & 0x0F
         self.signedval              = ((databits & 0x08) >> 3) == 1
 
+        # check version
         if errorChecking and version != 1:
             raise FatalError(f'unsupported datatype version: {version}')
 
@@ -630,6 +643,7 @@ class H5Dataset:
 
         version = self.readField(1)
 
+        # check version
         if errorChecking and (version != 2) and (version != 3):
             raise FatalError(f'invalid fill value version: {version}')
 
@@ -684,6 +698,7 @@ class H5Dataset:
         version                     = self.readField(1)
         flags                       = self.readField(1)
 
+        # check version
         if errorChecking and version != 1:
             raise FatalError(f'unsupported link message version: {version}')
 
@@ -764,6 +779,7 @@ class H5Dataset:
         version             = self.readField(1)
         self.layout         = self.readField(1)
 
+        # check version
         if errorChecking and version != 3:
             raise FatalError(f'invalid data layout version: {version}')
 
@@ -947,7 +963,6 @@ class H5Dataset:
     # headercontMsgHandler
     #######################
     def headercontMsgHandler(self, msg_size, obj_hdr_flags):
-        starting_position   = self.pos
         hc_offset           = self.readField(self.resourceObject.offsetSize)
         hc_length           = self.readField(self.resourceObject.lengthSize)
 
@@ -961,7 +976,7 @@ class H5Dataset:
         self.pos = hc_offset
 
         # read continuation block
-        if obj_hdr_flags & self.H5CORO_CUSTOM_V1_FLAG:
+        if obj_hdr_flags & self.CUSTOM_V1_FLAG:
             end_of_chdr = hc_offset + hc_length
             self.pos += self.readMessagesV1 (end_of_chdr, obj_hdr_flags)
         else:
@@ -989,7 +1004,6 @@ class H5Dataset:
     # symboltableMsgHandler
     #######################
     def symboltableMsgHandler(self, msg_size, obj_hdr_flags):
-        starting_position   = self.pos
         btree_addr          = self.readField(self.resourceObject.offsetSize)
         heap_addr           = self.readField(self.resourceObject.offsetSize)
         return_position     = self.pos
@@ -1093,6 +1107,7 @@ class H5Dataset:
         version                     = self.readField(1)
         flags                       = self.readField(1)
 
+        # check version
         if errorChecking and (version != 0):
             raise FatalError(f'unsupported link info version: {version}')
 
@@ -1194,31 +1209,425 @@ class H5Dataset:
     # readFractalHeap
     #######################
     def readFractalHeap(self, msg_type, heap_address, obj_hdr_flags):
-        pass
+        FRHP_CHECKSUM_DIRECT_BLOCKS = 0x02
+        starting_position           = self.pos
+
+        # read fractal heap header
+        signature           = self.readField(4)
+        version             = self.readField(1)
+        heap_obj_id_len     = self.readField(2) # Heap ID Length
+        io_filter_len       = self.readField(2) # I/O Filters' Encoded Length
+        flags               = self.readField(1) # Flags
+        max_size_mg_obj     = self.readField(4) # Maximum Size of Managed Objects
+        next_huge_obj_id    = self.readField(self.resourceObject.lengthSize) # Next Huge Object ID
+        btree_addr_huge_obj = self.readField(self.resourceObject.offsetSize) # v2 B-tree Address of Huge Objects
+        free_space_mg_blks  = self.readField(self.resourceObject.lengthSize) # Amount of Free Space in Managed Blocks
+        addr_free_space_mg  = self.readField(self.resourceObject.offsetSize) # Address of Managed Block Free Space Manager
+        mg_space            = self.readField(self.resourceObject.lengthSize) # Amount of Manged Space in Heap
+        alloc_mg_space      = self.readField(self.resourceObject.lengthSize) # Amount of Allocated Managed Space in Heap
+        dblk_alloc_iter     = self.readField(self.resourceObject.lengthSize) # Offset of Direct Block Allocation Iterator in Managed Space
+        mg_objs             = self.readField(self.resourceObject.lengthSize) # Number of Managed Objects in Heap
+        huge_obj_size       = self.readField(self.resourceObject.lengthSize) # Size of Huge Objects in Heap
+        huge_objs           = self.readField(self.resourceObject.lengthSize) # Number of Huge Objects in Heap
+        tiny_obj_size       = self.readField(self.resourceObject.lengthSize) # Size of Tiny Objects in Heap
+        tiny_objs           = self.readField(self.resourceObject.lengthSize) # Number of Tiny Objects in Heap
+        table_width         = self.readField(2) # Table Width
+        starting_blk_size   = self.readField(self.resourceObject.lengthSize) # Starting Block Size
+        max_dblk_size       = self.readField(self.resourceObject.lengthSize) # Maximum Direct Block Size
+        max_heap_size       = self.readField(2) # Maximum Heap Size
+        start_num_rows      = self.readField(2) # Starting # of Rows in Root Indirect Block
+        root_blk_addr       = self.readField(self.resourceObject.offsetSize) # Address of Root Block
+        curr_num_rows       = self.readField(2) # Current # of Rows in Root Indirect Block
+
+        # check signature and version
+        if errorChecking:
+            if signature != self.H5_FRHP_SIGNATURE_LE:
+                raise FatalError(f'invalid heap signature: {signature}')
+            if version != 0:
+                raise FatalError(f'unsupported heap version: {version}')
+
+        # display
+        if verbose:
+            logger.info(f'Fractal Heap [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Heap ID Length:       {heap_obj_id_len}')
+            logger.info(f'I/O Filters Length:   {io_filter_len}')
+            logger.info(f'Flags:                {flags}')
+            logger.info(f'Max Size of Objects:  {max_size_mg_obj}')
+            logger.info(f'Next Huge Object ID:  {next_huge_obj_id}')
+            logger.info(f'v2 B-tree Address:    {btree_addr_huge_obj}')
+            logger.info(f'Free Space in Blocks: {free_space_mg_blks}')
+            logger.info(f'Address Free Space:   {addr_free_space_mg}')
+            logger.info(f'Managed Space:        {mg_space}')
+            logger.info(f'Allocated Heap Space: {alloc_mg_space}')
+            logger.info(f'Direct Block Offset:  {dblk_alloc_iter}')
+            logger.info(f'Managed Heap Objects: {mg_objs}')
+            logger.info(f'Size of Huge Objects: {huge_obj_size}')
+            logger.info(f'Huge Objects in Heap: {huge_objs}')
+            logger.info(f'Size of Tiny Objects: {tiny_obj_size}')
+            logger.info(f'Tiny Objects in Heap: {tiny_objs}')
+            logger.info(f'Table Width:          {table_width}')
+            logger.info(f'Starting Block Size:  {starting_blk_size}')
+            logger.info(f'Max Direct Block Size:{max_dblk_size}')
+            logger.info(f'Max Heap Size:        {max_heap_size}')
+            logger.info(f'Starting # of Rows:   {start_num_rows}')
+            logger.info(f'Address of Root Block:{root_blk_addr}')
+            logger.info(f'Current # of Rows:    {curr_num_rows}')
+
+        # read filter information
+        if io_filter_len > 0:
+            filter_root_dblk   = self.readField(self.resourceObject.lengthSize) # Size of Filtered Root Direct Block
+            filter_mask        = self.readField(4) # I/O Filter Mask
+            logger.info(f'Filtered Direct Block:{filter_root_dblk}')
+            logger.info(f'I/O Filter Mask:      {filter_mask}')
+            raise FatalError(f'Filtering unsupported on fractal heap: {io_filter_len}')
+            # self.readMessage(FILTER_MSG, io_filter_len, obj_hdr_flags) # this currently populates filter for dataset
+
+        # skip checksum
+        self.pos += 4
+
+        # build heap info object
+        heap_info = {
+            'table_width': table_width,
+            'curr_num_rows': curr_num_rows,
+            'starting_blk_size': starting_blk_size,
+            'max_dblk_size': max_dblk_size,
+            'blk_offset_size': ((max_heap_size + 7) / 8),
+            'dblk_checksum': ((flags & FRHP_CHECKSUM_DIRECT_BLOCKS) != 0),
+            'msg_type': msg_type,
+            'num_objects': mg_objs,
+            'cur_objects': 0 # updated as objects are read
+        }
+
+        # process blocks
+        if heap_info['curr_num_rows'] == 0:
+            # direct blocks
+            bytes_read = self.readDirectBlock(heap_info, heap_info['starting_blk_size'], root_blk_addr, obj_hdr_flags)
+            if errorChecking and (bytes_read > heap_info['starting_blk_size']):
+                raise FatalError(f'direct block contianed more bytes than specified: {bytes_read} > {heap_info.starting_blk_size}')
+            self.pos += heap_info['starting_blk_size']
+        else:
+            # indirect blocks
+            bytes_read = self.readIndirectBlock(heap_info, 0, root_blk_addr, obj_hdr_flags)
+            if errorChecking and (bytes_read > heap_info['starting_blk_size']):
+                raise FatalError(f'indirect block contianed more bytes than specified: {bytes_read} > {heap_info.starting_blk_size}')
+            self.pos += bytes_read
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # readDirectBlock
     #######################
     def readDirectBlock(self, heap_info, block_size, obj_hdr_flags):
-        pass
+        starting_position = self.pos
+
+        # check signature and version
+        if errorChecking:
+            signature = self.readField(4)
+            version = self.readField(1)
+            if signature != self.H5_FHDB_SIGNATURE_LE:
+                raise FatalError(f'invalid direct block signature: {signature}')
+            if version != 0:
+                raise FatalError(f'invalid direct block version: {version}')
+        else:
+            self.pos += 5
+
+        # read block header
+        if verbose:
+            heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
+            blk_offset    = self.readField(heap_info['blk_offset_size']) # Block Offset
+            logger.info(f'Direct Block [{self.datasetLevel}] @{self.pos}: {heap_info["msg_type"]}')
+            logger.info(f'Heap Header Address:  {heap_hdr_addr}')
+            logger.info(f'Block Offset:         {blk_offset}')
+        else:
+            self.pos += self.resourceObject.offsetSize + heap_info['blk_offset_size']
+
+        # skip checksum
+        if heap_info['dblk_checksum']:
+            self.pos += 4
+
+        # read block data
+        data_left = block_size - (5 + self.resourceObject.offsetSize + heap_info['blk_offset_size'] + (heap_info['dblk_checksum'] * 4))
+        while data_left > 0:
+            # peak if more messages
+            early_exit = False
+            peak_size = min((1 << self.highestBit(data_left)), 8)
+            peak_addr = self.pos
+            if self.readField(peak_size) == 0:
+                early_exit = True
+            self.pos = peak_addr
+            if early_exit:
+                logger.info(f'exiting direct block {starting_position} early at {self.pos}')
+                break
+
+            # read message
+            data_read = self.readMessage(heap_info['msg_type'], data_left, obj_hdr_flags)
+            data_left -= data_read
+
+            # update number of objects read
+            #   there are often more links in a heap than managed objects;
+            #   therefore, the number of objects cannot be used to know when
+            #   to stop reading links
+            heap_info['cur_objects'] += 1
+
+            # check reading past block
+            if errorChecking and data_left < 0:
+                raise FatalError(f'reading message exceeded end of direct block: {starting_position}')
+
+            # check if dataset found
+            if self.datasetFound:
+                break
+
+        # skip to end of block (useful only if exited loop above early)
+        self.pos += data_left
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # readIndirectBlock
     #######################
     def readIndirectBlock(self, heap_info, block_size, obj_hdr_flags):
-        pass
+        starting_position = self.pos
+
+        # check signature and version
+        if errorChecking:
+            signature = self.readField(4)
+            version = self.readField(1)
+            if signature != self.H5_FHIB_SIGNATURE_LE:
+                raise FatalError(f'invalid direct block signature: {signature}')
+            if version != 0:
+                raise FatalError(f'unsupported direct block version: {version}')
+        else:
+            self.pos += 5
+
+        # read block header
+        if verbose:
+            heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
+            blk_offset    = self.readField(heap_info['blk_offset_size']) # Block Offset
+            logger.info(f'Indirect Block [{self.datasetLevel}] @{self.pos}: {heap_info["msg_type"]}')
+            logger.info(f'Heap Header Address:  {heap_hdr_addr}')
+            logger.info(f'Block Offset:         {blk_offset}')
+        else:
+            self.pos += self.resourceObject.offsetSize + heap_info['blk_offset_size']
+
+        # calculate number of direct and indirect blocks (see III.G. Disk Format: Level 1G - Fractal Heap)
+        nrows = heap_info['curr_num_rows'] # used for "root" indirect block only
+        curr_size = heap_info['starting_blk_size'] * heap_info['table_width']
+        if block_size > 0:
+            nrows = (self.highestBit(block_size) - self.highestBit(curr_size)) + 1
+        max_dblock_rows = (self.highestBit(heap_info['max_dblk_size']) - self.highestBit(heap_info['starting_blk_size'])) + 2
+        K = min(nrows, max_dblock_rows) * heap_info['table_width']
+        N = K - (max_dblock_rows * heap_info['table_width'])
+        if verbose:
+            logger.info(f'Number of Rows:       {nrows}')
+            logger.info(f'Max Direct Block Rows:{max_dblock_rows}')
+            logger.info(f'# Direct Blocks (K):  {K}')
+            logger.info(f'# Indirect Blocks (N):{N}')
+
+        # read direct child blocks
+        for row in range(nrows):
+            # calculate row's block size
+            if row == 0:
+                row_block_size = heap_info['starting_blk_size']
+            elif row == 1:
+                row_block_size = heap_info['starting_blk_size']
+            else:
+                row_block_size = heap_info['starting_blk_size'] * (0x2 << (row - 2))
+
+            # process entries in row
+            for entry in range(heap_info['table_width']):
+                # direct block entry
+                if row_block_size <= heap_info['max_dblk_size']:
+                    if errorChecking and (row >= K):
+                        raise FatalError(f'unexpected direct block row: {row_block_size}, {row} >= {K}')
+
+                    # read direct block address
+                    direct_block_addr = self.readField(self.resourceObject.offsetSize)
+                    # note: filters are unsupported, but if present would be read here
+                    if direct_block_addr != INVALID_VALUE[self.resourceObject.offsetSize] and not self.datasetFound:
+                        # read direct block
+                        return_position = self.pos
+                        self.pos = direct_block_addr
+                        bytes_read = self.readDirectBlock(heap_info, row_block_size, obj_hdr_flags)
+                        self.pos = return_position
+                        if errorChecking and (bytes_read > row_block_size):
+                            raise FatalError(f'direct block contained more bytes than specified: {bytes_read} > {row_block_size}')
+                elif errorChecking and ((row < K) or (row >= N)):
+                    raise FatalError(f'unexpected indirect block row: {row_block_size}, {row}, {N}')
+                else:
+                    # read indirect block address
+                    indirect_block_addr = self.readField(self.resourceObject.offsetSize)
+                    if indirect_block_addr != INVALID_VALUE[self.resourceObject.offsetSize] and not self.datasetFound:
+                        # read indirect block
+                        return_position = self.pos
+                        self.pos = indirect_block_addr
+                        bytes_read = self.readIndirectBlock(heap_info, row_block_size, obj_hdr_flags)
+                        self.pos = return_position
+                        if errorChecking and (bytes_read > row_block_size):
+                            raise FatalError(f'indirect block contained more bytes than specified: {bytes_read} > {row_block_size}')
+
+        # skip checksum
+        self.pos += 4
+
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # readBTreeV1
     #######################
     def readBTreeV1(self, buffer, buffer_offset):
-        pass
+        starting_position = self.pos
+        data_key1 = self.datasetStartRow
+        data_key2 = self.datasetStartRow + self.datasetNumRows - 1
+
+        # check signature and node type
+        if errorChecking:
+            signature = self.readField(4)
+            node_type = self.readField(1)
+            if signature != self.H5_TREE_SIGNATURE_LE:
+                raise FatalError(f'invalid b-tree signature: {signature}')
+            if node_type != 1:
+                raise FatalError(f'only raw data chunk b-trees supported: {node_type}')
+        else:
+            self.pos += 5
+
+        # read node level and number of entries
+        node_level = self.readField(1)
+        entries_used = self.readField(2)
+
+        # display
+        if verbose:
+            logger.info(f'B-Tree Node [{self.datasetLevel}] @{self.pos}')
+            logger.info(f'Node Level:           {node_level}')
+            logger.info(f'Entries Used:         {entries_used}')
+
+        # skip sibling addresses
+        self.pos += self.resourceObject.offsetSize * 2
+
+        # read first key
+        curr_node = self.readBTreeNodeV1(self.ndims)
+
+        # read children
+        for e in range(entries_used):
+            child_addr  = self.readField(self.resourceObject.offsetSize)
+            next_node   = self.readBTreeNodeV1(self.ndims)
+            child_key1  = curr_node.row_key
+            child_key2  = next_node.row_key # there is always +1 keys
+            if (next_node['chunk_size'] == 0) and (self.ndims > 0):
+                child_key2 = self.dimensions[0];
+
+            # display
+            if verbose:
+                logger.debug(f'Entry <{node_level}>:          {e}')
+                logger.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
+                logger.debug(f'CFilter Mask:         {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
+                logger.debug(f'Data Key:             {child_key1} | {child_key2}')
+                logger.debug(f'Slice:                {' '.join([str(d) for d in curr_node['slice']])}')
+                logger.debug(f'Child Address:        {child_addr}')
+
+            # check inclusion
+            if  (data_key1  >= child_key1 and data_key1  <  child_key2) or \
+                (data_key2  >= child_key1 and data_key2  <  child_key2) or \
+                (child_key1 >= data_key1  and child_key1 <= data_key2)  or \
+                (child_key2 >  data_key1  and child_key2 <  data_key2):
+                # process child entry
+                if node_level > 0:
+                    self.readBTreeV1(child_addr, buffer, buffer_offset)
+                else:
+                    # calculate chunk location
+                    chunk_offset = 0
+                    for i in range(self.ndims):
+                        slice_size = curr_node['slice'][i] * self.typesize
+                        for k in range(i):
+                            slice_size *= self.chunkDimensions[k]
+                        for j in range(i + 1, self.ndims):
+                            slice_size *= self.dimensions[j]
+                        chunk_offset += slice_size
+
+                    # calculate buffer index - offset into data buffer to put chunked data
+                    buffer_index = 0
+                    if chunk_offset > buffer_offset:
+                        buffer_index = chunk_offset - buffer_offset
+                        if buffer_index >= len(buffer):
+                            raise FatalError(f'invalid location to read data: {chunk_offset}, {buffer_offset}')
+
+                    # calculate chunk index - offset into chunk buffer to read from
+                    chunk_index = 0
+                    if buffer_offset > chunk_offset:
+                        chunk_index = buffer_offset - chunk_offset
+                        if chunk_index >= len(self.dataChunkBuffer):
+                            raise FatalError (f'invalid location to read chunk: {chunk_offset}, {buffer_offset}')
+
+                    # calculate chunk bytes - number of bytes to read from chunk buffer
+                    chunk_bytes = len(self.dataChunkBuffer) - chunk_index
+                    if chunk_bytes < 0:
+                        raise FatalError(f'no bytes of chunk data to read: {chunk_bytes}, {chunk_index}')
+                    elif (buffer_index + chunk_bytes) > len(buffer):
+                        chunk_bytes = len(buffer) - buffer_index
+
+                    # display
+                    if verbose:
+                        logger.debug(f'Chunk Offset:         {chunk_offset} ({chunk_offset/self.typesize})')
+                        logger.debug(f'Buffer Index:         {buffer_index} ({buffer_index/self.typesize})')
+                        logger.debug(f'Buffer Bytes:         {chunk_bytes} ({chunk_bytes/self.typesize})')
+
+                    # read chunk
+                    if self.filter[self.DEFLATE_FILTER]:
+                        # check current node chunk size
+                        if curr_node['chunk_size'] > (len(self.dataChunkBuffer) * self.FILTER_SIZE_SCALE):
+                            raise FatalError(f'Compressed chunk size exceeds buffer: {curr_node["chunk_size"]}, {len(self.dataChunkBuffer)}')
+                        # read data into chunk filter buffer (holds the compressed data)
+                        self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
+                        if (chunk_bytes == len(self.dataChunkBuffer)) and (not self.filter[self.SHUFFLE_FILTER]):
+                            # inflate directly into data buffer
+                            self.inflateChunk(self.dataChunkFilterBuffer, curr_node['chunk_size'], &buffer[buffer_index], chunk_bytes)
+                        else:
+                            # inflate into data chunk buffer */
+                            self.inflateChunk(self.dataChunkFilterBuffer, curr_node['chunk_size'], self.dataChunkBuffer)
+                            if self.filter[self.SHUFFLE_FILTER]:
+                                # shuffle data chunk buffer into data buffer
+                                self.shuffleChunk(self.dataChunkBuffer, &buffer[buffer_index], chunk_index, chunk_bytes, self.typesize)
+                            else:
+                                # copy data chunk buffer into data buffer
+                                memcpy(&buffer[buffer_index], &dataChunkBuffer[chunk_index], chunk_bytes);
+                    elif errorChecking and self.filter[self.SHUFFLE_FILTER]:
+                        raise FatalError(f'shuffle filter unsupported on uncompressed chunk')
+                    elif errorChecking and (len(self.dataChunkBuffer) != curr_node['chunk_size']):
+                        raise FatalError(f'mismatch in chunk size: {curr_node["chunk_size"]}, {len(self.dataChunkBuffer)}')
+                    else:
+                        # read data into data buffer
+                        chunk_offset_addr = child_addr + chunk_index
+                        &buffer[buffer_index] = ioRequest(chunk_offset_addr, chunk_bytes)
+
+            # goto next key
+            curr_node = next_node
 
     #######################
     # readBTreeNodeV1
     #######################
     def readBTreeNodeV1(self, ndims):
-        pass
+        node = {}
+
+        # read key
+        node['chunk_size'] = self.readField(4)
+        node['filter_mask'] = self.readField(4)
+        for _ in range(ndims):
+            node['slice'].append(self.readField(8))
+
+        # read trailing zero
+        trailing_zero = self.readField(8)
+        if errorChecking and (trailing_zero % self.typesize != 0):
+            raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
+
+        # set node key
+        if ndims > 0:
+            node['row_key'] = node['slice'][0]
+        else:
+            node['row_key'] = 0
+
+        # return copy of node
+        return node;
 
     #######################
     # inflateChunk
@@ -1227,9 +1636,9 @@ class H5Dataset:
         pass
 
     #######################
-    # inflateChunk
+    # shuffleChunk
     #######################
-    def inflateChunk(self, input, output, output_offset, type_size):
+    def shuffleChunk(self, input, output, output_offset, type_size):
         pass
 
     #######################
