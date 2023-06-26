@@ -267,7 +267,7 @@ class H5Dataset:
                         buffer[i:i+self.fillsize] = fill_value
 
         # populate result
-        result['elements']  = buffer_size / self.typeSize
+        result['elements']  = int(buffer_size / self.typeSize)
         result['datasize']  = buffer_size
         result['data']      = buffer
         result['numrows']   = self.datasetNumRows
@@ -387,6 +387,9 @@ class H5Dataset:
 
             elif errorChecking:
                 raise FatalError(f'invalid data layout: {self.layout}')
+
+        # parse data to values
+        result['values'] = numpy.frombuffer(result['data'].tobytes(), dtype=result['datatype'], count=result['elements'])
 
         # return result of reading dataset back to caller
         return self.dataset, result
@@ -1903,11 +1906,11 @@ class H5Dataset:
 # H5Coro Functions
 ###############################################################################
 
-def workerThread(worker):
+def workerThread(dataset_worker):
     try:
-        return worker.readDataset()
+        return dataset_worker.readDataset()
     except FatalError as e:
-        logger.error(f'H5Coro encountered an error processing {worker.resourceObject.resource}/{worker.dataset}: {e}')
+        logger.error(f'H5Coro encountered an error processing {dataset_worker.resourceObject.resource}/{dataset_worker.dataset}: {e}')
         return '',{}
 
 ###############################################################################
@@ -1941,8 +1944,8 @@ class H5Coro:
         self.datasets = {}
         if len(datasets) > 0:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasets)) as executor:
-                workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
-                futures = [executor.submit(workerThread, worker) for worker in workers]
+                dataset_workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
+                futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
                 for future in concurrent.futures.as_completed(futures):
                     dataset, result = future.result()
                     self.datasets[dataset] = result
