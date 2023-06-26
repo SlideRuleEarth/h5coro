@@ -176,7 +176,7 @@ class H5Dataset:
         self.datasetNumRows         = self.ALL_ROWS
         self.metaOnly               = False
         self.pos                    = self.resourceObject.rootAddress
-        self.datasetPath            = dataset.split('/')
+        self.datasetPath            = list(filter(('').__ne__, dataset.split('/')))
         self.datasetLevel           = 0
         self.datasetFound           = False
         self.ndims                  = None
@@ -476,11 +476,9 @@ class H5Dataset:
                 msg_order = self.readField(2)
 
             # read message
-            logging.info(f'__________________________________________ STARTING POS: 0x{self.pos:x} -- {msg_size} {msg_type}')
             bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags)
-            logging.info(f'__________________________________________ ENDING POS: 0x{self.pos:x} -- {msg_size} {msg_type}')
             if errorChecking and (bytes_read != msg_size):
-                raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
+                raise FatalError(f'header v0 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
             if self.datasetFound:
@@ -499,7 +497,7 @@ class H5Dataset:
     #######################
     def readObjHdrV1(self):
         starting_position = self.pos
-        self.pos += 1 # reserved field
+        self.pos += 2 # version and reserved field
 
         if verbose:
             # read number of header messages
@@ -551,7 +549,7 @@ class H5Dataset:
             self.pos += alignment_padding
             bytes_read += alignment_padding
             if errorChecking and (bytes_read != msg_size):
-                raise FatalError(f'header message different size than specified: {bytes_read} != {msg_size}')
+                raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
             if self.datasetFound:
@@ -618,7 +616,7 @@ class H5Dataset:
 
         # check version and flags and dimenstionality
         if errorChecking:
-            if version != 1 or version != 2:
+            if version != 1 and version != 2:
                 raise FatalError(f'unsupported dataspace version: {version}')
             if flags & PERM_INDEX_PRESENT:
                 raise FatalError(f'unsupported permutation indexes')
@@ -632,7 +630,7 @@ class H5Dataset:
                 dimension = self.readField(self.resourceObject.lengthSize)
                 self.dimensions.append(dimension)
                 if verbose:
-                    logger.info(f'Dimension  {x}:          {dimension}')
+                    logger.info(f'Dimension {x}:          {dimension}')
 
             # skip over dimension permutations
             if flags & MAX_DIM_PRESENT:
@@ -934,7 +932,7 @@ class H5Dataset:
         if link_type == HARD_LINK:
             obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
             if verbose:
-                logger.info(f'Hard Link:            {obj_hdr_addr}')
+                logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             if follow_link:
                 return_position = self.pos
                 self.pos = obj_hdr_addr
@@ -1125,7 +1123,7 @@ class H5Dataset:
             logger.info(f'Dataspace Size:       {dataspace_size}')
 
         # check if desired attribute
-        if( ((self.datasetLevel + 1) == self.datasetPath.length()) and
+        if( ((self.datasetLevel + 1) == len(self.datasetPath)) and
             (attr_name == self.datasetPath[self.datasetLevel]) ):
             self.datasetFound = True
 
@@ -1157,6 +1155,7 @@ class H5Dataset:
             return self.pos - starting_position
         else:
             # skip processing message
+            self.pos = starting_position + msg_size
             return msg_size
 
     #######################
@@ -1170,7 +1169,7 @@ class H5Dataset:
         # display
         if verbose:
             logger.info(f'<<Header Continuation Message [{self.datasetLevel}] @0x{starting_position:x}>>')
-            logger.info(f'Offset:               {hc_offset}')
+            logger.info(f'Offset:               0x{hc_offset:x}')
             logger.info(f'Length:               {hc_length}')
 
         # go to continuation block
@@ -1192,14 +1191,14 @@ class H5Dataset:
 
             # read continuation header messages
             end_of_chdr = hc_offset + hc_length - 4 # leave 4 bytes for checksum below
-            self.readMessages(end_of_chdr, obj_hdr_flags)
+            self.readMessagesV0(end_of_chdr, obj_hdr_flags)
 
             # skip checksum
             self.pos += 4
 
         # return bytes read
         bytes_read = self.resourceObject.offsetSize + self.resourceObject.lengthSize
-        self.pos = return_position + bytes_read
+        self.pos = return_position
         return bytes_read
 
     #######################
