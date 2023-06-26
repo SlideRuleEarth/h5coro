@@ -27,14 +27,13 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import requests
+from datetime import datetime
 import concurrent.futures
 import threading
 import struct
 import logging
-import numpy
 import zlib
-from datetime import datetime
+import numpy
 
 ###############################################################################
 # CONSTANTS
@@ -59,16 +58,24 @@ INVALID_VALUE = {
 ###############################################################################
 
 logger = logging.getLogger(__name__)
-session = requests.Session()
-session.trust_env = False
 
 ###############################################################################
 # OPTIONS
 ###############################################################################
 
-errorChecking = True
-verbose = True
-enableAttributes = True
+errorCheckingOption = True
+verboseOption = False
+enableAttributesOption = False
+logLevelOption = None
+logFormatOption = '%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s'
+
+def config(errorChecking=errorCheckingOption, verbose=verboseOption, enableAttributes=enableAttributesOption, logLevel=logLevelOption, logFormat=logFormatOption):
+    global errorCheckingOption, verboseOption, enableAttributesOption
+    errorCheckingOption = errorChecking
+    verboseOption = verbose
+    enableAttributesOption = enableAttributes
+    if logLevel != None:
+        logging.basicConfig(level=logLevel, format=logFormat)
 
 ###############################################################################
 # EXCEPTIONS
@@ -238,9 +245,6 @@ class H5Dataset:
         elif self.address == INVALID_VALUE[self.resourceObject.offsetSize]:
             raise FatalError(f'invalid data address')
 
-        # populate type size
-        result['typesize'] = self.typeSize
-
         # calculate size of data row (note dimension starts at 1)
         row_size = self.typeSize
         for d in range(1, self.ndims):
@@ -269,7 +273,6 @@ class H5Dataset:
         # populate result
         result['elements']  = int(buffer_size / self.typeSize)
         result['datasize']  = buffer_size
-        result['data']      = buffer
         result['numrows']   = self.datasetNumRows
 
         # set number of columns
@@ -290,7 +293,7 @@ class H5Dataset:
         buffer_offset = row_size * self.datasetStartRow
 
         # check if data address and data size is valid
-        if errorChecking:
+        if errorCheckingOption:
             if (self.size != 0) and (self.size < (buffer_offset + buffer_size)):
                 raise FatalError(f'read exceeds available data: {self.size} < {buffer_offset} + {buffer_size}')
             if (self.filter[self.DEFLATE_FILTER] or self.filter[self.SHUFFLE_FILTER]) and \
@@ -304,7 +307,7 @@ class H5Dataset:
                 buffer = self.ioRequest(data_addr, buffer_size)
             elif self.layout == self.CHUNKED_LAYOUT:
                 # chunk layout specific error checks
-                if errorChecking:
+                if errorCheckingOption:
                     if self.elementSize != self.typeSize:
                         raise FatalError(f'chunk element size does not match data element size: {self.elementSize} !=  {self.typeSize}')
                     elif self.chunkElements <= 0:
@@ -383,13 +386,13 @@ class H5Dataset:
                             ci = self.FLAT_NDIMS - 1
 
                     # replace buffer
-                    result['data'] = fbuf
+                    buffer = fbuf
 
-            elif errorChecking:
+            elif errorCheckingOption:
                 raise FatalError(f'invalid data layout: {self.layout}')
 
         # parse data to values
-        result['values'] = numpy.frombuffer(result['data'].tobytes(), dtype=result['datatype'], count=result['elements'])
+        result['values'] = numpy.frombuffer(buffer.tobytes(), dtype=result['datatype'], count=result['elements'])
 
         # return result of reading dataset back to caller
         return self.dataset, result
@@ -415,7 +418,7 @@ class H5Dataset:
         starting_position       = self.pos
 
         # check signature and version
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             version = self.readField(1)
             if signature != self.H5_OHDR_SIGNATURE_LE:
@@ -428,7 +431,7 @@ class H5Dataset:
         # file stats
         obj_hdr_flags = self.readField(1)
         if obj_hdr_flags & FILE_STATS_BIT:
-            if verbose:
+            if verboseOption:
                 access_time = self.readField(4)
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
@@ -443,7 +446,7 @@ class H5Dataset:
 
         # phase attributes
         if obj_hdr_flags & STORE_CHANGE_PHASE_BIT:
-            if verbose:
+            if verboseOption:
                 max_compact_attr = self.readField(2)
                 max_dense_attr = self.readField(2)
                 logger.info(f'Max Compact Attr:     {max_compact_attr}')
@@ -481,7 +484,7 @@ class H5Dataset:
 
             # read message
             bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags, dlvl)
-            if errorChecking and (bytes_read != msg_size):
+            if errorCheckingOption and (bytes_read != msg_size):
                 raise FatalError(f'header v0 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
@@ -490,7 +493,7 @@ class H5Dataset:
                 break # exit loop because dataset is found
 
         # check bytes read
-        if errorChecking and (self.pos != end_of_hdr):
+        if errorCheckingOption and (self.pos != end_of_hdr):
             raise FatalError(f'did not read correct number of v0 bytes: 0x{self.pos:x} != 0x{end_of_hdr:x}')
 
         # return bytes read
@@ -503,7 +506,7 @@ class H5Dataset:
         starting_position = self.pos
         self.pos += 2 # version and reserved field
 
-        if verbose:
+        if verboseOption:
             # read number of header messages
             num_hdr_msgs = self.readField(2)
             logger.info(f'<<Object Information V1 [{dlvl}] @0x{starting_position:x}>>')
@@ -539,7 +542,7 @@ class H5Dataset:
             msg_flags = self.readField(1)
 
             # read reserved fields
-            if errorChecking:
+            if errorCheckingOption:
                 reserved1 = self.readField(1)
                 reserved2 = self.readField(2)
                 if reserved1 != 0 and reserved2 != 0:
@@ -552,7 +555,7 @@ class H5Dataset:
             alignment_padding = ((8 - (bytes_read % 8)) % 8) # align to 8-byte boundary
             self.pos += alignment_padding
             bytes_read += alignment_padding
-            if errorChecking and (bytes_read != msg_size):
+            if errorCheckingOption and (bytes_read != msg_size):
                 raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
@@ -565,7 +568,7 @@ class H5Dataset:
             self.pos = end_of_hdr
 
         # check bytes read
-        if errorChecking and (self.pos != end_of_hdr):
+        if errorCheckingOption and (self.pos != end_of_hdr):
             raise FatalError(f'did not read correct number of v1 bytes: 0x{self.pos:x} != 0x{end_of_hdr:x}')
 
         # return bytes read
@@ -588,14 +591,14 @@ class H5Dataset:
             self.SYMBOL_TABLE_MSG:      self.symboltableMsgHandler,
         }
         # attrubite handlers
-        if enableAttributes:
+        if enableAttributesOption:
             msg_handler_table[self.ATTRIBUTE_MSG] = self.attributeMsgHandler
             msg_handler_table[self.ATTRIBUTE_INFO_MSG] = self.attributeinfoMsgHandler
         # process message
         try:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
-            if verbose:
+            if verboseOption:
                 logger.info(f'<<Skipped Message [{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
             return msg_size
@@ -612,14 +615,14 @@ class H5Dataset:
         flags              = self.readField(1)
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Dataspace Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Dimensionality:       {dimensionality}')
             logger.info(f'Flags:                {flags}')
 
         # check version and flags and dimenstionality
-        if errorChecking:
+        if errorCheckingOption:
             if version != 1 and version != 2:
                 raise FatalError(f'unsupported dataspace version: {version}')
             if flags & PERM_INDEX_PRESENT:
@@ -633,7 +636,7 @@ class H5Dataset:
             for x in range(self.ndims):
                 dimension = self.readField(self.resourceObject.lengthSize)
                 self.dimensions.append(dimension)
-                if verbose:
+                if verboseOption:
                     logger.info(f'Dimension {x}:          {dimension}')
 
             # skip over dimension permutations
@@ -655,32 +658,32 @@ class H5Dataset:
         flags                       = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Link Information Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
         # check version
-        if errorChecking and (version != 0):
+        if errorCheckingOption and (version != 0):
             raise FatalError(f'unsupported link info version: {version}')
 
         # read maximum creation index
         if flags & MAX_CREATE_PRESENT_BIT:
             max_create_index = self.readField(8)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Max Create Index:     {max_create_index}')
 
         # read heap address and name index
         heap_address = self.readField(self.resourceObject.offsetSize)
         name_index = self.readField(self.resourceObject.offsetSize)
-        if verbose:
+        if verboseOption:
             logger.info(f'Heap Address:         0x{heap_address:x}')
             logger.info(f'Name Index:           0x{name_index:x}')
 
         # read address of v2 B-tree for creation order index
         if flags & CREATE_ORDER_PRESENT_BIT:
             create_order_index = self.readField(self.resourceObject.offsetSize)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Create Order Index:   0x{create_order_index:x}')
 
         # follow heap address if provided
@@ -706,7 +709,7 @@ class H5Dataset:
         self.signedval              = ((databits & 0x08) >> 3) == 1
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Data Type Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Type Size:            {self.typeSize}')
@@ -714,12 +717,12 @@ class H5Dataset:
             logger.info(f'Signed:               {self.signedval}')
 
         # check version
-        if errorChecking and version != 1:
+        if errorCheckingOption and version != 1:
             raise FatalError(f'unsupported datatype version: {version}')
 
         # Fixed Point
         if self.type == self.FIXED_POINT_TYPE:
-            if verbose:
+            if verboseOption:
                 byte_order      = databits & 0x1
                 pad_type        = (databits & 0x06) >> 1
                 bit_offset      = self.readField(2)
@@ -733,7 +736,7 @@ class H5Dataset:
         # Floating Point
         elif self.type == self.FLOATING_POINT_TYPE:
             self.signedval = True
-            if verbose:
+            if verboseOption:
                 byte_order      = ((databits & 0x40) >> 5) | (databits & 0x1)
                 pad_type        = (databits & 0x0E) >> 1
                 mant_norm       = (databits & 0x30) >> 4
@@ -760,7 +763,7 @@ class H5Dataset:
                 self.pos += 12
         # Variable Length
         elif self.type == self.VARIABLE_LENGTH_TYPE:
-            if verbose:
+            if verboseOption:
                 vt_type = databits & 0xF # variable length type
                 padding = (databits & 0xF0) >> 4
                 charset = (databits & 0xF00) >> 8
@@ -796,7 +799,7 @@ class H5Dataset:
         elif self.type == self.STRING_TYPE:
             self.typeSize = 1
             self.signedval = True
-            if verbose:
+            if verboseOption:
                 padding = databits & 0x0F
                 charset = (databits & 0xF0) >> 4
 
@@ -817,7 +820,7 @@ class H5Dataset:
                 logger.info(f'Padding Type:         {padding_str}')
                 logger.info(f'Character Set:        {charset_str}')
         # Default
-        elif errorChecking:
+        elif errorCheckingOption:
             raise FatalError(f'unsupported datatype: {self.type}')
 
         # return bytes read
@@ -832,17 +835,17 @@ class H5Dataset:
         version             = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Fill Value Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
-        if errorChecking and (version != 2) and (version != 3):
+        if errorCheckingOption and (version != 2) and (version != 3):
             raise FatalError(f'invalid fill value version: {version}')
 
         # version 2
         if version == 2:
-            if verbose:
+            if verboseOption:
                 space_allocation_time = self.readField(1)
                 fill_value_write_time = self.readField(1)
                 logger.info(f'Space Allocation Time:{space_allocation_time}')
@@ -858,7 +861,7 @@ class H5Dataset:
         # version 3
         else:
             flags = self.readField(1)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Fill Flags:           {flags}')
 
             if flags & FILL_VALUE_DEFINED:
@@ -866,7 +869,7 @@ class H5Dataset:
                 self.fillvalue = self.readField(self.fillsize)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'Fill Value Size:      {self.fillsize}')
             logger.info(f'Fill Value:           {self.fillvalue}')
 
@@ -889,13 +892,13 @@ class H5Dataset:
         flags                       = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Link Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
         # check version
-        if errorChecking and version != 1:
+        if errorCheckingOption and version != 1:
             raise FatalError(f'unsupported link message version: {version}')
 
         # read link type
@@ -915,13 +918,13 @@ class H5Dataset:
 
         # read link name
         link_name_len_of_len = 1 << (flags & SIZE_OF_LEN_OF_NAME_MASK)
-        if errorChecking and (link_name_len_of_len > 8):
+        if errorCheckingOption and (link_name_len_of_len > 8):
             raise FatalError(f'invalid link name length of length: {link_name_len_of_len}')
         link_name_len = self.readField(link_name_len_of_len)
         link_name = self.readArray(link_name_len).decode('utf-8')
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'Link Type:            {link_type}')
             logger.info(f'Creation Order:       {create_order}')
             logger.info(f'Character Set:        {char_set}')
@@ -935,7 +938,7 @@ class H5Dataset:
         # process link
         if link_type == HARD_LINK:
             obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             # follow link
             if follow_link:
@@ -950,20 +953,20 @@ class H5Dataset:
         elif link_type == SOFT_LINK:
             soft_link_len = self.readField(2)
             soft_link = self.readArray(soft_link_len).decode('utf-8')
-            if verbose:
+            if verboseOption:
                 logger.info(f'Soft Link:            {soft_link}')
-            if errorChecking and follow_link:
+            if errorCheckingOption and follow_link:
                 raise FatalError(f'unsupported soft link encountered: {soft_link}')
 
         elif link_type == EXTERNAL_LINK:
             ext_link_len = self.readField(2)
             ext_link = self.readArray(ext_link_len).decode('utf-8')
-            if verbose:
+            if verboseOption:
                 logger.info(f'External Link:        {ext_link}')
-            if errorChecking and follow_link:
+            if errorCheckingOption and follow_link:
                 raise FatalError(f'unsupported external link encountered: {ext_link}')
 
-        elif errorChecking:
+        elif errorCheckingOption:
             raise FatalError(f'unsupported link type: {link_type}')
 
         # return bytes read
@@ -978,13 +981,13 @@ class H5Dataset:
         self.layout         = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Data Layout Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Layout:               {self.layout}')
 
         # check version
-        if errorChecking and version != 3:
+        if errorCheckingOption and version != 3:
             raise FatalError(f'invalid data layout version: {version}')
 
         # read layouts
@@ -999,7 +1002,7 @@ class H5Dataset:
             # read number of dimensions
             chunk_num_dim = self.readField(1) - 1  # dimensionality is plus one over actual number of dimensions
             chunk_num_dim = min(chunk_num_dim, self.MAX_NDIMS)
-            if errorChecking and (self.ndims != None) and (chunk_num_dim != self.ndims):
+            if errorCheckingOption and (self.ndims != None) and (chunk_num_dim != self.ndims):
                 raise FatalError(f'number of chunk dimensions does not match dimensionality of data: {chunk_num_dim} != {self.ndims}')
             # read address of B-tree
             self.address = self.readField(self.resourceObject.offsetSize)
@@ -1013,16 +1016,16 @@ class H5Dataset:
             # read element size
             self.elementSize = self.readField(4)
             # display
-            if verbose:
+            if verboseOption:
                 logger.info(f'Element Size:         {self.elementSize}')
                 logger.info(f'# Chunked Dimensions: {chunk_num_dim}')
                 for d in range(chunk_num_dim):
                     logger.info(f'Chunk Dimension {d}:    {self.chunkDimensions[d]}')
-        elif errorChecking:
+        elif errorCheckingOption:
             raise FatalError(f'unsupported data layout: {self.layout}')
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'Dataset Size:         {self.size}')
             logger.info(f'Dataset Address:      {self.address}')
 
@@ -1038,13 +1041,13 @@ class H5Dataset:
         num_filters         = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Filter Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Num Filters:          {num_filters}')
 
         # check version
-        if errorChecking and (version != 1) and (version != 2):
+        if errorCheckingOption and (version != 1) and (version != 2):
             raise FatalError(f'invalid filter version: {version}')
 
         # move past reserved bytes in version 1
@@ -1066,7 +1069,7 @@ class H5Dataset:
             num_parms = self.readField(2)
 
             # consistency check flags
-            if errorChecking and (flags != 0) and (flags != 1):
+            if errorCheckingOption and (flags != 0) and (flags != 1):
                 raise FatalError(f'invalid flags in filter message: {flags}')
 
             # read name
@@ -1077,7 +1080,7 @@ class H5Dataset:
                 self.pos += name_padding
 
             # display
-            if verbose:
+            if verboseOption:
                 logger.info(f'Filter ID:            {filter}')
                 logger.info(f'Flags:                {flags}')
                 logger.info(f'# Parameters:         {num_parms}')
@@ -1111,12 +1114,12 @@ class H5Dataset:
         dataspace_size      = self.readField(2)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Attribute Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
-        if errorChecking and (version != 1):
+        if errorCheckingOption and (version != 1):
             raise FatalError(f'invalid attribute version: {version}')
 
         # read attribute name
@@ -1124,7 +1127,7 @@ class H5Dataset:
         self.pos += (8 - (name_size % 8)) % 8; # align to next 8-byte boundary
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'Name:                 {attr_name}')
             logger.info(f'Message Size:         {msg_size}')
             logger.info(f'Datatype Size:        {datatype_size}')
@@ -1137,14 +1140,14 @@ class H5Dataset:
 
             # read datatype message
             datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            if errorChecking and (datatype_bytes_read > datatype_size):
+            if errorCheckingOption and (datatype_bytes_read > datatype_size):
                 raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} > {datatype_size}')
             self.pos += datatype_bytes_read
             self.pos += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
 
             # read dataspace message
             dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            if errorChecking and (dataspace_bytes_read > dataspace_size):
+            if errorCheckingOption and (dataspace_bytes_read > dataspace_size):
                 raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} > {dataspace_size}')
             self.pos += dataspace_bytes_read
             self.pos += (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
@@ -1175,7 +1178,7 @@ class H5Dataset:
         hc_length           = self.readField(self.resourceObject.lengthSize)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Header Continuation Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Offset:               0x{hc_offset:x}')
             logger.info(f'Length:               {hc_length}')
@@ -1190,7 +1193,7 @@ class H5Dataset:
             self.readMessagesV1(end_of_chdr, obj_hdr_flags, dlvl)
         else:
             # read signature
-            if errorChecking:
+            if errorCheckingOption:
                 signature = self.readField(4)
                 if signature != self.H5_OCHK_SIGNATURE_LE:
                     raise FatalError(f'invalid header continuation signature: 0x{signature:x}')
@@ -1219,14 +1222,14 @@ class H5Dataset:
         return_position     = self.pos
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Symbol Table Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'B-Tree Address:       {btree_addr}')
             logger.info(f'Heap Address:         {heap_addr}')
 
         # read heap info
         self.pos = heap_addr
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             version = self.readField(1)
             if signature != self.H5_HEAP_SIGNATURE_LE:
@@ -1242,7 +1245,7 @@ class H5Dataset:
         self.pos = btree_addr
         while True:
             # read header info
-            if errorChecking:
+            if errorCheckingOption:
                 signature = self.readField(4)
                 node_type = self.readField(1)
                 if signature != self.H5_TREE_SIGNATURE_LE:
@@ -1266,7 +1269,7 @@ class H5Dataset:
             left_sibling    = self.readField(self.resourceObject.offsetSize)
             right_sibling   = self.readField(self.resourceObject.offsetSize)
             key0            = self.readField(self.resourceObject.lengthSize)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Entries Used:         {entries_used}')
                 logger.info(f'Left Sibling:         {left_sibling}')
                 logger.info(f'Right Sibling:        {right_sibling}')
@@ -1290,7 +1293,7 @@ class H5Dataset:
                 self.pos = right_sibling
 
             # read header info
-            if errorChecking:
+            if errorCheckingOption:
                 signature = self.readField(4)
                 node_type = self.readField(1)
                 node_level = self.readField(1)
@@ -1319,32 +1322,32 @@ class H5Dataset:
         flags                       = self.readField(1)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Attribute Info [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
         # check version
-        if errorChecking and (version != 0):
+        if errorCheckingOption and (version != 0):
             raise FatalError(f'unsupported link info version: {version}')
 
         # read maximum creation index (number of elements in group)
         if flags & MAX_CREATE_PRESENT_BIT:
             max_create_index = self.readField(2)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Max Creation Index:   {max_create_index}')
 
         # read heap and name offsets
         heap_address    = self.readField(self.resourceObject.offsetSize)
         name_index      = self.readField(self.resourceObject.offsetSize)
-        if verbose:
+        if verboseOption:
             logger.info(f'Heap Address:         {heap_address}')
             logger.info(f'Name Index:           {name_index}')
 
         # read creation order index
         if flags & CREATE_ORDER_PRESENT_BIT:
             create_order_index = self.readField(self.resourceObject.offsetSize)
-            if verbose:
+            if verboseOption:
                 logger.info(f'Creation Order Index: {create_order_index}')
 
         # follow heap address if provided */
@@ -1364,11 +1367,11 @@ class H5Dataset:
         starting_position = self.pos
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Symbol Table [{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and version
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             version = self.readField(1)
             if signature != self.H5_SNOD_SIGNATURE_LE:
@@ -1402,7 +1405,7 @@ class H5Dataset:
             self.pos = return_position
 
             # display
-            if verbose:
+            if verboseOption:
                 logger.info(f'Link Name:            {link_name}')
                 logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
 
@@ -1454,7 +1457,7 @@ class H5Dataset:
         curr_num_rows       = self.readField(2) # Current # of Rows in Root Indirect Block
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Fractal Heap [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Heap ID Length:       {heap_obj_id_len}')
             logger.info(f'I/O Filters Length:   {io_filter_len}')
@@ -1481,7 +1484,7 @@ class H5Dataset:
             logger.info(f'Current # of Rows:    {curr_num_rows}')
 
         # check signature and version
-        if errorChecking:
+        if errorCheckingOption:
             if signature != self.H5_FRHP_SIGNATURE_LE:
                 raise FatalError(f'invalid heap signature: 0x{signature:x}')
             if version != 0:
@@ -1528,7 +1531,7 @@ class H5Dataset:
             logger.info(f'RETURNING TO: 0x{self.pos:x}')
 
         # check bytes read
-        if errorChecking and (bytes_read > heap_info['starting_blk_size']):
+        if errorCheckingOption and (bytes_read > heap_info['starting_blk_size']):
             raise FatalError(f'block contianed more bytes than specified: {bytes_read} > {heap_info["starting_blk_size"]}')
 
         # return bytes read
@@ -1541,11 +1544,11 @@ class H5Dataset:
         starting_position = self.pos
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Direct Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             version = self.readField(1)
             if signature != self.H5_FHDB_SIGNATURE_LE:
@@ -1556,7 +1559,7 @@ class H5Dataset:
             self.pos += 5
 
         # read block header
-        if verbose:
+        if verboseOption:
             heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
             logger.info(f'Heap Header Address:  {heap_hdr_addr}')
         else:
@@ -1592,7 +1595,7 @@ class H5Dataset:
             heap_info['cur_objects'] += 1
 
             # check reading past block
-            if errorChecking and data_left < 0:
+            if errorCheckingOption and data_left < 0:
                 raise FatalError(f'reading message exceeded end of direct block: {starting_position}')
 
             # check if dataset found
@@ -1612,11 +1615,11 @@ class H5Dataset:
         starting_position = self.pos
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<Indirect Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             version = self.readField(1)
             if signature != self.H5_FHIB_SIGNATURE_LE:
@@ -1627,7 +1630,7 @@ class H5Dataset:
             self.pos += 5
 
         # read block header
-        if verbose:
+        if verboseOption:
             heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
             logger.info(f'Heap Header Address:  {heap_hdr_addr}')
         else:
@@ -1642,7 +1645,7 @@ class H5Dataset:
         max_dblock_rows = (self.highestBit(heap_info['max_dblk_size']) - self.highestBit(heap_info['starting_blk_size'])) + 2
         K = min(nrows, max_dblock_rows) * heap_info['table_width']
         N = K - (max_dblock_rows * heap_info['table_width'])
-        if verbose:
+        if verboseOption:
             logger.info(f'Number of Rows:       {nrows}')
             logger.info(f'Max Direct Block Rows:{max_dblock_rows}')
             logger.info(f'# Direct Blocks (K):  {K}')
@@ -1662,7 +1665,7 @@ class H5Dataset:
             for entry in range(heap_info['table_width']):
                 # direct block entry
                 if row_block_size <= heap_info['max_dblk_size']:
-                    if errorChecking and (row >= K):
+                    if errorCheckingOption and (row >= K):
                         raise FatalError(f'unexpected direct block row: {row_block_size}, {row} >= {K}')
 
                     # read direct block address
@@ -1674,9 +1677,9 @@ class H5Dataset:
                         self.pos = direct_block_addr
                         bytes_read = self.readDirectBlock(heap_info, row_block_size, obj_hdr_flags, dlvl)
                         self.pos = return_position
-                        if errorChecking and (bytes_read > row_block_size):
+                        if errorCheckingOption and (bytes_read > row_block_size):
                             raise FatalError(f'direct block contained more bytes than specified: {bytes_read} > {row_block_size}')
-                elif errorChecking and ((row < K) or (row >= N)):
+                elif errorCheckingOption and ((row < K) or (row >= N)):
                     raise FatalError(f'unexpected indirect block row: {row_block_size}, {row}, {N}')
                 else:
                     # read indirect block address
@@ -1687,7 +1690,7 @@ class H5Dataset:
                         self.pos = indirect_block_addr
                         bytes_read = self.readIndirectBlock(heap_info, row_block_size, obj_hdr_flags, dlvl)
                         self.pos = return_position
-                        if errorChecking and (bytes_read > row_block_size):
+                        if errorCheckingOption and (bytes_read > row_block_size):
                             raise FatalError(f'indirect block contained more bytes than specified: {bytes_read} > {row_block_size}')
 
         # skip checksum
@@ -1705,11 +1708,11 @@ class H5Dataset:
         data_key2 = self.datasetStartRow + self.datasetNumRows - 1
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'<<B-Tree Node [{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and node type
-        if errorChecking:
+        if errorCheckingOption:
             signature = self.readField(4)
             node_type = self.readField(1)
             if signature != self.H5_TREE_SIGNATURE_LE:
@@ -1724,7 +1727,7 @@ class H5Dataset:
         entries_used = self.readField(2)
 
         # display
-        if verbose:
+        if verboseOption:
             logger.info(f'Node Level:           {node_level}')
             logger.info(f'Entries Used:         {entries_used}')
 
@@ -1744,7 +1747,7 @@ class H5Dataset:
                 child_key2 = self.dimensions[0]
 
             # display
-            if verbose:
+            if verboseOption:
                 logger.debug(f'Entry <{node_level}>:            {e}')
                 logger.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
                 logger.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
@@ -1797,7 +1800,7 @@ class H5Dataset:
                         chunk_bytes = len(buffer) - buffer_index
 
                     # display
-                    if verbose:
+                    if verboseOption:
                         logger.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.typeSize)})')
                         logger.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.typeSize)})')
                         logger.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.typeSize)})')
@@ -1825,11 +1828,11 @@ class H5Dataset:
                                 buffer[buffer_index:buffer_index+chunk_bytes] = dataChunkBuffer[chunk_index:chunk_index+chunk_bytes]
 
                     # check filter options
-                    elif errorChecking and self.filter[self.SHUFFLE_FILTER]:
+                    elif errorCheckingOption and self.filter[self.SHUFFLE_FILTER]:
                         raise FatalError(f'shuffle filter unsupported on uncompressed chunk')
 
                     # check buffer sizes
-                    elif errorChecking and (self.dataChunkBufferSize != curr_node['chunk_size']):
+                    elif errorCheckingOption and (self.dataChunkBufferSize != curr_node['chunk_size']):
                         raise FatalError(f'mismatch in chunk size: {curr_node["chunk_size"]}, {self.dataChunkBufferSize}')
 
                     # read data into data buffer
@@ -1855,7 +1858,7 @@ class H5Dataset:
 
         # read trailing zero
         trailing_zero = self.readField(8)
-        if errorChecking and (trailing_zero % self.typeSize != 0):
+        if errorCheckingOption and (trailing_zero % self.typeSize != 0):
             raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
 
         # set node key
@@ -1877,7 +1880,7 @@ class H5Dataset:
     # shuffleChunk
     #######################
     def shuffleChunk(self, input, output_offset, output_size, type_size):
-        if errorChecking and (type_size < 0 or type_size > 8):
+        if errorCheckingOption and (type_size < 0 or type_size > 8):
             raise FatalError(f'invalid data size to perform shuffle on: {type_size}')
         output = numpy.empty(output_size, dtype=numpy.byte)
         dst_index = 0
@@ -2000,7 +2003,7 @@ class H5Coro:
 
         # Super Block Version 0 #
         if superblock_version == 0:
-            if errorChecking:
+            if errorCheckingOption:
                 # read start of superblock
                 block = self.ioRequest(9, 2)
                 freespace_version, roottable_version = struct.unpack(f'<BB', block)
@@ -2040,7 +2043,7 @@ class H5Coro:
             root_group_offset = struct.unpack(f'<{SIZE_2_FORMAT[self.offsetSize]}', block)[0]
 
         # print file information
-        if verbose:
+        if verboseOption:
             logger.info(f'File Information @0x{root_group_offset:x}')
             logger.info(f'Size of Offsets:      {self.offsetSize}')
             logger.info(f'Size of Lengths:      {self.lengthSize}')
