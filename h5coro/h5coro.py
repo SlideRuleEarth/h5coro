@@ -68,12 +68,18 @@ verboseOption = False
 enableAttributesOption = False
 logLevelOption = None
 logFormatOption = '%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s'
-
-def config(errorChecking=errorCheckingOption, verbose=verboseOption, enableAttributes=enableAttributesOption, logLevel=logLevelOption, logFormat=logFormatOption):
-    global errorCheckingOption, verboseOption, enableAttributesOption
+cacheLineSizeOption = 0x400000
+def config( errorChecking=errorCheckingOption,
+            verbose=verboseOption,
+            enableAttributes=enableAttributesOption,
+            logLevel=logLevelOption,
+            logFormat=logFormatOption,
+            cacheLineSize=cacheLineSizeOption ):
+    global errorCheckingOption, verboseOption, enableAttributesOption, cacheLineSizeOption
     errorCheckingOption = errorChecking
     verboseOption = verbose
     enableAttributesOption = enableAttributes
+    cacheLineSizeOption = cacheLineSize
     if logLevel != None:
         logging.basicConfig(level=logLevel, format=logFormat)
 
@@ -1958,8 +1964,8 @@ class H5Coro:
     #######################
     # Constants
     #######################
-    CACHE_LINE_SIZE         =           0x400000
-    CACHE_LINE_MASK         = 0xFFFFFFFFFFC00000
+    CACHE_LINE_SIZE         = cacheLineSizeOption
+    CACHE_LINE_MASK         = (0xFFFFFFFFFFFFFFFF - (CACHE_LINE_SIZE-1))
     H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
 
     #######################
@@ -2001,7 +2007,6 @@ class H5Coro:
         count = 1
         for dataset in self.keys():
             separator = count == total_count and ' ' or ','
-            print("SEP", separator, count, total_count)
             rstr += f'"{dataset}": {self.results[dataset]}{separator}'
             count += 1
         rstr += '}'
