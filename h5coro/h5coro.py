@@ -1735,19 +1735,20 @@ class H5Dataset:
         for e in range(entries_used):
             child_addr  = self.readField(self.resourceObject.offsetSize)
             next_node   = self.readBTreeNodeV1(self.ndims)
-            child_key1  = curr_node.row_key
-            child_key2  = next_node.row_key # there is always +1 keys
+            child_key1  = curr_node['row_key']
+            child_key2  = next_node['row_key'] # there is always +1 keys
             if (next_node['chunk_size'] == 0) and (self.ndims > 0):
-                child_key2 = self.dimensions[0];
+                child_key2 = self.dimensions[0]
 
             # display
             if verbose:
-                logger.debug(f'Entry <{node_level}>:          {e}')
+                logger.debug(f'Entry <{node_level}>:            {e}')
                 logger.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
-                logger.debug(f'CFilter Mask:         {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
-                logger.debug(f'Data Key:             {child_key1} | {child_key2}')
+                logger.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
+                logger.debug(f'Chunk Key:            {child_key1} | {child_key2}')
+                logger.debug(f'Data Key:             {data_key1} | {data_key2}')
                 logger.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
-                logger.debug(f'Child Address:        {child_addr}')
+                logger.debug(f'Child Address:        0x{child_addr:x}')
 
             # check inclusion
             if  (data_key1  >= child_key1 and data_key1  <  child_key2) or \
@@ -1756,7 +1757,10 @@ class H5Dataset:
                 (child_key2 >  data_key1  and child_key2 <  data_key2):
                 # process child entry
                 if node_level > 0:
-                    self.readBTreeV1(child_addr, buffer, buffer_offset)
+                    return_position = self.pos
+                    self.pos = child_addr
+                    self.readBTreeV1(buffer, buffer_offset, dlvl)
+                    self.pos = return_position
                 else:
                     # calculate chunk location
                     chunk_offset = 0
@@ -1791,9 +1795,9 @@ class H5Dataset:
 
                     # display
                     if verbose:
-                        logger.debug(f'Chunk Offset:         {chunk_offset} ({chunk_offset/self.typeSize})')
-                        logger.debug(f'Buffer Index:         {buffer_index} ({buffer_index/self.typeSize})')
-                        logger.debug(f'Buffer Bytes:         {chunk_bytes} ({chunk_bytes/self.typeSize})')
+                        logger.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.typeSize)})')
+                        logger.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.typeSize)})')
+                        logger.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.typeSize)})')
 
                     # read chunk
                     if self.filter[self.DEFLATE_FILTER]:
@@ -1803,7 +1807,7 @@ class H5Dataset:
 
                         # inflate directly into data buffer
                         if (chunk_bytes == self.dataChunkBufferSize) and (not self.filter[self.SHUFFLE_FILTER]):
-                             buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
+                            buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
 
                         # inflate into data chunk buffer */
                         else:
@@ -1842,6 +1846,7 @@ class H5Dataset:
         # read key
         node['chunk_size'] = self.readField(4)
         node['filter_mask'] = self.readField(4)
+        node['slice'] = []
         for _ in range(ndims):
             node['slice'].append(self.readField(8))
 
@@ -1863,7 +1868,7 @@ class H5Dataset:
     # inflateChunk
     #######################
     def inflateChunk(self, input):
-        return zlib.decompress(input)
+        return numpy.frombuffer(zlib.decompress(input), dtype=numpy.byte)
 
     #######################
     # shuffleChunk
