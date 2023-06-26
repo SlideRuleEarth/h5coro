@@ -1,10 +1,8 @@
 
-
 class FileDriver:
 
     def __init__(self, resource, credentials):
         self.resource = resource
-        self.credentials = credentials
         self.f = open(resource, "rb")
 
     def read(self, pos, size):

@@ -1925,8 +1925,8 @@ class H5Coro:
     #######################
     # Constants
     #######################
-    CACHE_LINE_SIZE         =               0x10 #0x400000
-    CACHE_LINE_MASK         = 0xFFFFFFFFFFFFFFF0
+    CACHE_LINE_SIZE         =           0x400000
+    CACHE_LINE_MASK         = 0xFFFFFFFFFFC00000
     H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
 
     #######################
