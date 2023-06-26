@@ -85,6 +85,41 @@ class FatalError(RuntimeError):
     pass
 
 ###############################################################################
+# H5Values Class
+###############################################################################
+
+class H5Values:
+
+    #######################
+    # Constructor
+    #######################
+    def __init__(self, _elements, _datasize, _numrows, _numcols, _datatype, _values):
+        self.elements   = _elements
+        self.datasize   = _datasize
+        self.numrows    = _numrows
+        self.numcols    = _numcols
+        self.datatype   = _datatype
+        self.values     = _values
+
+    #######################
+    # operator: []
+    #######################
+    def __getitem__(self, key):
+        return self.values[key]
+
+    #######################
+    # representation
+    #######################
+    def __repr__(self):
+        return f'{{"elements": {self.elements}, "datasize": {self.datasize}, "numrows": {self.numrows}, "numcols": {self.numcols}, "datatype": {self.datatype}, "values": {self.values}}}'
+
+    #######################
+    # print
+    #######################
+    def __str__(self):
+        return self.__repr__()
+
+###############################################################################
 # H5Dataset Class
 ###############################################################################
 
@@ -228,8 +263,6 @@ class H5Dataset:
     # readDataset
     #######################
     def readDataset(self):
-        result = {}
-
         # traverse file for dataset
         #
         #   ... here is where we can check self cache for
@@ -270,25 +303,6 @@ class H5Dataset:
                     for i in range(0, buffer_size, self.fillsize):
                         buffer[i:i+self.fillsize] = fill_value
 
-        # populate result
-        result['elements']  = int(buffer_size / self.typeSize)
-        result['datasize']  = buffer_size
-        result['numrows']   = self.datasetNumRows
-
-        # set number of columns
-        if self.ndims == 0:
-            result['numcols'] = 0
-        elif self.ndims == 1:
-            result['numcols'] = 1
-        elif self.ndims >= 2:
-            result['numcols'] = self.dimensions[1]
-
-        # set data type
-        try:
-            result['datatype'] = self.TO_DATATYPE[self.type][self.signedval][self.typeSize]
-        except Exception as e:
-            raise FatalError(f'unable to set data type {self.type}, {self.signedval}, {self.typeSize}: {e}')
-
         # calculate buffer start */
         buffer_offset = row_size * self.datasetStartRow
 
@@ -304,7 +318,7 @@ class H5Dataset:
         if not self.metaOnly and (buffer_size > 0):
             if (self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT):
                 data_addr = self.address + buffer_offset
-                buffer = self.ioRequest(data_addr, buffer_size)
+                buffer = self.resourceObject.ioRequest(data_addr, buffer_size)
             elif self.layout == self.CHUNKED_LAYOUT:
                 # chunk layout specific error checks
                 if errorCheckingOption:
@@ -391,11 +405,30 @@ class H5Dataset:
             elif errorCheckingOption:
                 raise FatalError(f'invalid data layout: {self.layout}')
 
-        # parse data to values
-        result['values'] = numpy.frombuffer(buffer.tobytes(), dtype=result['datatype'], count=result['elements'])
+        try:
+            # set results
+            numcols = 0
+            if self.ndims == 0:
+                numcols = 0
+            elif self.ndims == 1:
+                numcols = 1
+            elif self.ndims >= 2:
+                numcols = self.dimensions[1]
+            elements = int(buffer_size / self.typeSize)
+            datatype = self.TO_DATATYPE[self.type][self.signedval][self.typeSize]
+
+            # fulfill h5 future
+            h5values = H5Values(elements,
+                                buffer_size,
+                                self.datasetNumRows,
+                                numcols,
+                                datatype,
+                                numpy.frombuffer(buffer.tobytes(), dtype=datatype, count=elements))
+        except Exception as e:
+            raise FatalError(f'unable to populate results for {self.resourceObject.resource}/{self.dataset}: {e}')
 
         # return result of reading dataset back to caller
-        return self.dataset, result
+        return self.dataset, h5values
 
     #######################
     # readObjHdr
@@ -1944,14 +1977,47 @@ class H5Coro:
         self.baseAddress = 0
         self.rootAddress = self.readSuperblock()
 
-        self.datasets = {}
+        self.results = {}
         if len(datasets) > 0:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasets)) as executor:
                 dataset_workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
                 futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
                 for future in concurrent.futures.as_completed(futures):
-                    dataset, result = future.result()
-                    self.datasets[dataset] = result
+                    dataset, values = future.result()
+                    self.results[dataset] = values
+
+    #######################
+    # operator: []
+    #######################
+    def __getitem__(self, key):
+        return self.results[key]
+
+    #######################
+    # representation
+    #######################
+    def __repr__(self):
+        rstr = '{ '
+        total_count = len(self.keys())
+        count = 1
+        for dataset in self.keys():
+            separator = count == total_count and ' ' or ','
+            print("SEP", separator, count, total_count)
+            rstr += f'"{dataset}": {self.results[dataset]}{separator}'
+            count += 1
+        rstr += '}'
+        return rstr
+
+    #######################
+    # print
+    #######################
+    def __str__(self):
+        return self.__repr__()
+
+    #######################
+    # keys
+    #######################
+    def keys(self):
+        return self.results.keys()
 
     #######################
     # ioRequest
