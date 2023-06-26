@@ -177,7 +177,6 @@ class H5Dataset:
         self.metaOnly               = False
         self.pos                    = self.resourceObject.rootAddress
         self.datasetPath            = list(filter(('').__ne__, dataset.split('/')))
-        self.datasetLevel           = 0
         self.datasetFound           = False
         self.ndims                  = None
         self.dimensions             = []
@@ -228,7 +227,8 @@ class H5Dataset:
         #
         #   ... here is where we can check self cache for
         #       group info and jump right to it
-        self.readObjHdr()
+        dataset_level = 0
+        self.readObjHdr(dataset_level)
 
         # sanity check data attrbutes
         if self.typeSize <= 0:
@@ -284,7 +284,7 @@ class H5Dataset:
         try:
             result['datatype'] = self.TO_DATATYPE[self.type][self.signedval][self.typeSize]
         except Exception as e:
-            raise FatalError(f'unable to set data type: {e}')
+            raise FatalError(f'unable to set data type {self.type}, {self.signedval}, {self.typeSize}: {e}')
 
         # calculate buffer start */
         buffer_offset = row_size * self.datasetStartRow
@@ -314,7 +314,8 @@ class H5Dataset:
                 self.dataChunkBufferSize = self.chunkElements * self.typeSize
 
                 # read b-tree
-                self.readBTreeV1(self.address, buffer, buffer_offset)
+                self.pos = self.address
+                self.readBTreeV1(buffer, buffer_offset, dataset_level)
 
                 # check need to flatten chunks
                 flatten = False
@@ -393,18 +394,18 @@ class H5Dataset:
     #######################
     # readObjHdr
     #######################
-    def readObjHdr(self):
+    def readObjHdr(self, dlvl):
         version_peek = self.readField(1)
         self.pos -= 1
         if version_peek == 1:
-            self.readObjHdrV1()
+            self.readObjHdrV1(dlvl)
         else:
-            self.readObjHdrV0()
+            self.readObjHdrV0(dlvl)
 
     #######################
     # readObjHdrV0
     #######################
-    def readObjHdrV0(self):
+    def readObjHdrV0(self, dlvl):
         FILE_STATS_BIT          = 0x20
         STORE_CHANGE_PHASE_BIT  = 0x10
         SIZE_OF_CHUNK_0_MASK    = 0x3
@@ -429,7 +430,7 @@ class H5Dataset:
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
                 birth_time = self.readField(4)
-                logger.info(f'<<Object Information V0 [{self.datasetLevel}] @0x{starting_position:x}>>')
+                logger.info(f'<<Object Information V0 [{dlvl}] @0x{starting_position:x}>>')
                 logger.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
                 logger.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
                 logger.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
@@ -450,7 +451,7 @@ class H5Dataset:
         # read header messages
         size_of_chunk0 = self.readField(1 << (obj_hdr_flags & SIZE_OF_CHUNK_0_MASK))
         end_of_hdr = self.pos + size_of_chunk0
-        self.readMessagesV0(end_of_hdr, obj_hdr_flags)
+        self.readMessagesV0(end_of_hdr, obj_hdr_flags, dlvl)
 
         # skip checksum
         self.pos += 4
@@ -461,7 +462,7 @@ class H5Dataset:
     #######################
     # readMessagesV0
     #######################
-    def readMessagesV0(self, end_of_hdr, obj_hdr_flags):
+    def readMessagesV0(self, end_of_hdr, obj_hdr_flags, dlvl):
         ATTR_CREATION_TRACK_BIT = 0x4
         starting_position       = self.pos
 
@@ -476,7 +477,7 @@ class H5Dataset:
                 msg_order = self.readField(2)
 
             # read message
-            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags)
+            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags, dlvl)
             if errorChecking and (bytes_read != msg_size):
                 raise FatalError(f'header v0 message different size than specified: {bytes_read} != {msg_size}')
 
@@ -495,14 +496,14 @@ class H5Dataset:
     #######################
     # readObjHdrV1
     #######################
-    def readObjHdrV1(self):
+    def readObjHdrV1(self, dlvl):
         starting_position = self.pos
         self.pos += 2 # version and reserved field
 
         if verbose:
             # read number of header messages
             num_hdr_msgs = self.readField(2)
-            logger.info(f'<<Object Information V1 [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Object Information V1 [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'# Header Messages:    {num_hdr_msgs}')
 
             # read object reference count
@@ -516,7 +517,7 @@ class H5Dataset:
         end_of_hdr = self.pos + obj_hdr_size
 
         # read header messages
-        self.readMessagesV1(end_of_hdr, self.CUSTOM_V1_FLAG)
+        self.readMessagesV1(end_of_hdr, self.CUSTOM_V1_FLAG, dlvl)
 
         # return bytes read
         return self.pos - starting_position
@@ -524,7 +525,7 @@ class H5Dataset:
     #######################
     # readMessagesV1
     #######################
-    def readMessagesV1(self, end_of_hdr, obj_hdr_flags):
+    def readMessagesV1(self, end_of_hdr, obj_hdr_flags, dlvl):
         SIZE_OF_V1_PREFIX = 8
         starting_position = self.pos
 
@@ -544,7 +545,7 @@ class H5Dataset:
                 self.pos += 3
 
             # read message
-            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags)
+            bytes_read = self.readMessage(msg_type, msg_size, obj_hdr_flags, dlvl)
             alignment_padding = ((8 - (bytes_read % 8)) % 8) # align to 8-byte boundary
             self.pos += alignment_padding
             bytes_read += alignment_padding
@@ -570,7 +571,7 @@ class H5Dataset:
     #######################
     # readMessage
     #######################
-    def readMessage(self, msg_type, msg_size, obj_hdr_flags):
+    def readMessage(self, msg_type, msg_size, obj_hdr_flags, dlvl):
         # default handlers
         msg_handler_table = {
             self.DATASPACE_MSG:         self.dataspaceMsgHandler,
@@ -589,17 +590,17 @@ class H5Dataset:
             msg_handler_table[self.ATTRIBUTE_INFO_MSG] = self.attributeinfoMsgHandler
         # process message
         try:
-            return msg_handler_table[msg_type](msg_size, obj_hdr_flags)
+            return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
             if verbose:
-                logger.info(f'<<Skipped Message [{self.datasetLevel}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
+                logger.info(f'<<Skipped Message [{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
             return msg_size
 
     #######################
     # dataspaceMsgHandler
     #######################
-    def dataspaceMsgHandler(self, msg_size, obj_hdr_flags):
+    def dataspaceMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         MAX_DIM_PRESENT    = 0x1
         PERM_INDEX_PRESENT = 0x2
         starting_position  = self.pos
@@ -609,7 +610,7 @@ class H5Dataset:
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
         if verbose:
-            logger.info(f'<<Dataspace Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Dataspace Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Dimensionality:       {dimensionality}')
             logger.info(f'Flags:                {flags}')
@@ -643,7 +644,7 @@ class H5Dataset:
     #######################
     # linkinfoMsgHandler
     #######################
-    def linkinfoMsgHandler(self, msg_size, obj_hdr_flags):
+    def linkinfoMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         MAX_CREATE_PRESENT_BIT      = 0x1
         CREATE_ORDER_PRESENT_BIT    = 0x2
         starting_position           = self.pos
@@ -652,7 +653,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Link Information Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Link Information Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -683,7 +684,7 @@ class H5Dataset:
         if heap_address != INVALID_VALUE[self.resourceObject.offsetSize]:
             return_position = self.pos
             self.pos = heap_address
-            self.readFractalHeap(self.LINK_MSG, obj_hdr_flags)
+            self.readFractalHeap(self.LINK_MSG, obj_hdr_flags, dlvl)
             self.pos = return_position
 
         # return bytes read
@@ -692,7 +693,7 @@ class H5Dataset:
     #######################
     # datatypeMsgHandler
     #######################
-    def datatypeMsgHandler(self, msg_size, obj_hdr_flags):
+    def datatypeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position           = self.pos
         version_class               = self.readField(4)
         self.typeSize               = self.readField(4)
@@ -703,7 +704,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Data Type Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Data Type Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Type Size:            {self.typeSize}')
             logger.info(f'Data Type:            {self.type}')
@@ -728,6 +729,7 @@ class H5Dataset:
                 self.pos += 4
         # Floating Point
         elif self.type == self.FLOATING_POINT_TYPE:
+            self.signedval = True
             if verbose:
                 byte_order      = ((databits & 0x40) >> 5) | (databits & 0x1)
                 pad_type        = (databits & 0x0E) >> 1
@@ -821,14 +823,14 @@ class H5Dataset:
     #######################
     # fillvalueMsgHandler
     #######################
-    def fillvalueMsgHandler(self, msg_size, obj_hdr_flags):
+    def fillvalueMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         FILL_VALUE_DEFINED  = 0x20
         starting_position   = self.pos
         version             = self.readField(1)
 
         # display
         if verbose:
-            logger.info(f'<<Fill Value Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Fill Value Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
@@ -871,7 +873,7 @@ class H5Dataset:
     #######################
     # linkMsgHandler
     #######################
-    def linkMsgHandler(self, msg_size, obj_hdr_flags):
+    def linkMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         SIZE_OF_LEN_OF_NAME_MASK    = 0x03
         CREATE_ORDER_PRESENT_BIT    = 0x04
         LINK_TYPE_PRESENT_BIT       = 0x08
@@ -885,7 +887,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Link Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Link Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -924,8 +926,7 @@ class H5Dataset:
 
         # check if follow link
         follow_link = False
-        if link_name == self.datasetPath[self.datasetLevel]:
-            self.datasetLevel += 1
+        if link_name == self.datasetPath[dlvl]:
             follow_link = True
 
         # process link
@@ -933,11 +934,15 @@ class H5Dataset:
             obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
             if verbose:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
+            # follow link
             if follow_link:
                 return_position = self.pos
                 self.pos = obj_hdr_addr
-                self.readObjHdr()
+                self.readObjHdr(dlvl + 1)
                 self.pos = return_position
+                # dataset found
+                if (dlvl + 1) == len(self.datasetPath):
+                    self.datasetFound = True
 
         elif link_type == SOFT_LINK:
             soft_link_len = self.readField(2)
@@ -964,14 +969,14 @@ class H5Dataset:
     #######################
     # datalayoutMsgHandler
     #######################
-    def datalayoutMsgHandler(self, msg_size, obj_hdr_flags):
+    def datalayoutMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         version             = self.readField(1)
         self.layout         = self.readField(1)
 
         # display
         if verbose:
-            logger.info(f'<<Data Layout Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Data Layout Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Layout:               {self.layout}')
 
@@ -1024,14 +1029,14 @@ class H5Dataset:
     #######################
     # filterMsgHandler
     #######################
-    def filterMsgHandler(self, msg_size, obj_hdr_flags):
+    def filterMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         version             = self.readField(1)
         num_filters         = self.readField(1)
 
         # display
         if verbose:
-            logger.info(f'<<Filter Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Filter Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Num Filters:          {num_filters}')
 
@@ -1094,7 +1099,7 @@ class H5Dataset:
     #######################
     # attributeMsgHandler
     #######################
-    def attributeMsgHandler(self, msg_size, obj_hdr_flags):
+    def attributeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         version             = self.readField(1)
         self.pos           += 1
@@ -1104,7 +1109,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Attribute Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Attribute Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
@@ -1123,19 +1128,19 @@ class H5Dataset:
             logger.info(f'Dataspace Size:       {dataspace_size}')
 
         # check if desired attribute
-        if( ((self.datasetLevel + 1) == len(self.datasetPath)) and
-            (attr_name == self.datasetPath[self.datasetLevel]) ):
+        if( ((dlvl + 1) == len(self.datasetPath)) and
+            (attr_name == self.datasetPath[dlvl]) ):
             self.datasetFound = True
 
             # read datatype message
-            datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags)
+            datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
             if errorChecking and (datatype_bytes_read > datatype_size):
                 raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} > {datatype_size}')
             self.pos += datatype_bytes_read
             self.pos += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
 
             # read dataspace message
-            dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags)
+            dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
             if errorChecking and (dataspace_bytes_read > dataspace_size):
                 raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} > {dataspace_size}')
             self.pos += dataspace_bytes_read
@@ -1161,14 +1166,14 @@ class H5Dataset:
     #######################
     # headercontMsgHandler
     #######################
-    def headercontMsgHandler(self, msg_size, obj_hdr_flags):
+    def headercontMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         hc_offset           = self.readField(self.resourceObject.offsetSize)
         hc_length           = self.readField(self.resourceObject.lengthSize)
 
         # display
         if verbose:
-            logger.info(f'<<Header Continuation Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Header Continuation Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Offset:               0x{hc_offset:x}')
             logger.info(f'Length:               {hc_length}')
 
@@ -1179,7 +1184,7 @@ class H5Dataset:
         # read continuation block
         if obj_hdr_flags & self.CUSTOM_V1_FLAG:
             end_of_chdr = hc_offset + hc_length
-            self.readMessagesV1(end_of_chdr, obj_hdr_flags)
+            self.readMessagesV1(end_of_chdr, obj_hdr_flags, dlvl)
         else:
             # read signature
             if errorChecking:
@@ -1191,7 +1196,7 @@ class H5Dataset:
 
             # read continuation header messages
             end_of_chdr = hc_offset + hc_length - 4 # leave 4 bytes for checksum below
-            self.readMessagesV0(end_of_chdr, obj_hdr_flags)
+            self.readMessagesV0(end_of_chdr, obj_hdr_flags, dlvl)
 
             # skip checksum
             self.pos += 4
@@ -1204,7 +1209,7 @@ class H5Dataset:
     #######################
     # symboltableMsgHandler
     #######################
-    def symboltableMsgHandler(self, msg_size, obj_hdr_flags):
+    def symboltableMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         btree_addr          = self.readField(self.resourceObject.offsetSize)
         heap_addr           = self.readField(self.resourceObject.offsetSize)
@@ -1212,7 +1217,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Symbol Table Message [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Symbol Table Message [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'B-Tree Address:       {btree_addr}')
             logger.info(f'Heap Address:         {heap_addr}')
 
@@ -1269,7 +1274,7 @@ class H5Dataset:
                 symbol_table_addr = self.readField(self.resourceObject.offsetSize)
                 current_node_pos = self.pos
                 self.pos = symbol_table_addr
-                self.readSymbolTable(head_data_addr)
+                self.readSymbolTable(head_data_addr, dlvl)
                 self.pos = current_node_pos
                 self.pos += self.resourceObject.lengthSize # skip next key
                 if self.datasetFound:
@@ -1303,7 +1308,7 @@ class H5Dataset:
     #######################
     # attributeinfoMsgHandler
     #######################
-    def attributeinfoMsgHandler(self, msg_size, obj_hdr_flags):
+    def attributeinfoMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         MAX_CREATE_PRESENT_BIT      = 0x01
         CREATE_ORDER_PRESENT_BIT    = 0x02
         starting_position           = self.pos
@@ -1312,7 +1317,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Attribute Info [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Attribute Info [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -1343,7 +1348,7 @@ class H5Dataset:
         if heap_address != INVALID_VALUE[self.resourceObject.offsetSize]:
             return_position = self.pos
             self.pos = heap_address
-            self.readFractalHeap(self.ATTRIBUTE_MSG, obj_hdr_flags)
+            self.readFractalHeap(self.ATTRIBUTE_MSG, obj_hdr_flags, dlvl)
             self.pos = return_position
 
         # return bytes read
@@ -1352,12 +1357,12 @@ class H5Dataset:
     #######################
     # readSymbolTable
     #######################
-    def readSymbolTable(self, heap_address):
+    def readSymbolTable(self, heap_address, dlvl):
         starting_position = self.pos
 
         # display
         if verbose:
-            logger.info(f'<<Symbol Table [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Symbol Table [{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and version
         if errorChecking:
@@ -1400,14 +1405,13 @@ class H5Dataset:
 
             # process link
             return_position = self.pos
-            if link_name == self.datasetPath[self.datasetLevel]:
+            if link_name == self.datasetPath[dlvl]:
                 if cache_type == 2:
                     raise FatalError(f'symbolic links are unsupported: {link_name}')
-                self.datasetLevel += 1
-                self.readObjHdr(obj_hdr_addr)
-                self.datasetFound = True
+                self.readObjHdr(obj_hdr_addr, dlvl + 1)
                 self.pos = return_position
-                break
+                if not self.metaOnly:
+                    break # datasetFound
 
         # return bytes read
         return self.pos - starting_position
@@ -1415,7 +1419,7 @@ class H5Dataset:
     #######################
     # readFractalHeap
     #######################
-    def readFractalHeap(self, msg_type, obj_hdr_flags):
+    def readFractalHeap(self, msg_type, obj_hdr_flags, dlvl):
         FRHP_CHECKSUM_DIRECT_BLOCKS = 0x02
         starting_position           = self.pos
 
@@ -1448,7 +1452,7 @@ class H5Dataset:
 
         # display
         if verbose:
-            logger.info(f'<<Fractal Heap [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<Fractal Heap [{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Heap ID Length:       {heap_obj_id_len}')
             logger.info(f'I/O Filters Length:   {io_filter_len}')
             logger.info(f'Flags:                {flags}')
@@ -1512,11 +1516,11 @@ class H5Dataset:
         # process blocks
         if heap_info['curr_num_rows'] == 0:
             # direct blocks
-            bytes_read = self.readDirectBlock(heap_info, heap_info['starting_blk_size'], obj_hdr_flags)
+            bytes_read = self.readDirectBlock(heap_info, heap_info['starting_blk_size'], obj_hdr_flags, dlvl)
             self.pos = return_position + heap_info['starting_blk_size']
         else:
             # indirect blocks
-            bytes_read = self.readIndirectBlock(heap_info, 0, obj_hdr_flags)
+            bytes_read = self.readIndirectBlock(heap_info, 0, obj_hdr_flags, dlvl)
             self.pos = return_position + bytes_read
             logger.info(f'RETURNING TO: 0x{self.pos:x}')
 
@@ -1530,12 +1534,12 @@ class H5Dataset:
     #######################
     # readDirectBlock
     #######################
-    def readDirectBlock(self, heap_info, block_size, obj_hdr_flags):
+    def readDirectBlock(self, heap_info, block_size, obj_hdr_flags, dlvl):
         starting_position = self.pos
 
         # display
         if verbose:
-            logger.info(f'<<Direct Block [{self.datasetLevel}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            logger.info(f'<<Direct Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if errorChecking:
@@ -1575,7 +1579,7 @@ class H5Dataset:
                 break
 
             # read message
-            data_read = self.readMessage(heap_info['msg_type'], data_left, obj_hdr_flags)
+            data_read = self.readMessage(heap_info['msg_type'], data_left, obj_hdr_flags, dlvl)
             data_left -= data_read
 
             # update number of objects read
@@ -1601,12 +1605,12 @@ class H5Dataset:
     #######################
     # readIndirectBlock
     #######################
-    def readIndirectBlock(self, heap_info, block_size, obj_hdr_flags):
+    def readIndirectBlock(self, heap_info, block_size, obj_hdr_flags, dlvl):
         starting_position = self.pos
 
         # display
         if verbose:
-            logger.info(f'<<Indirect Block [{self.datasetLevel}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            logger.info(f'<<Indirect Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if errorChecking:
@@ -1665,7 +1669,7 @@ class H5Dataset:
                         # read direct block
                         return_position = self.pos
                         self.pos = direct_block_addr
-                        bytes_read = self.readDirectBlock(heap_info, row_block_size, obj_hdr_flags)
+                        bytes_read = self.readDirectBlock(heap_info, row_block_size, obj_hdr_flags, dlvl)
                         self.pos = return_position
                         if errorChecking and (bytes_read > row_block_size):
                             raise FatalError(f'direct block contained more bytes than specified: {bytes_read} > {row_block_size}')
@@ -1678,7 +1682,7 @@ class H5Dataset:
                         # read indirect block
                         return_position = self.pos
                         self.pos = indirect_block_addr
-                        bytes_read = self.readIndirectBlock(heap_info, row_block_size, obj_hdr_flags)
+                        bytes_read = self.readIndirectBlock(heap_info, row_block_size, obj_hdr_flags, dlvl)
                         self.pos = return_position
                         if errorChecking and (bytes_read > row_block_size):
                             raise FatalError(f'indirect block contained more bytes than specified: {bytes_read} > {row_block_size}')
@@ -1692,14 +1696,14 @@ class H5Dataset:
     #######################
     # readBTreeV1
     #######################
-    def readBTreeV1(self, buffer, buffer_offset):
+    def readBTreeV1(self, buffer, buffer_offset, dlvl):
         starting_position = self.pos
         data_key1 = self.datasetStartRow
         data_key2 = self.datasetStartRow + self.datasetNumRows - 1
 
         # display
         if verbose:
-            logger.info(f'<<B-Tree Node [{self.datasetLevel}] @0x{starting_position:x}>>')
+            logger.info(f'<<B-Tree Node [{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and node type
         if errorChecking:
@@ -1799,15 +1803,15 @@ class H5Dataset:
 
                         # inflate directly into data buffer
                         if (chunk_bytes == self.dataChunkBufferSize) and (not self.filter[self.SHUFFLE_FILTER]):
-                             buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer, chunk_bytes)
+                             buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
 
                         # inflate into data chunk buffer */
                         else:
-                            self.dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer, self.dataChunkBufferSize)
+                            dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer)
 
                             # shuffle data chunk buffer into data buffer
                             if self.filter[self.SHUFFLE_FILTER]:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(self.dataChunkBuffer, chunk_index, chunk_bytes, self.typeSize)
+                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(dataChunkBuffer, chunk_index, chunk_bytes, self.typeSize)
 
                             # copy data chunk buffer into data buffer
                             else:
@@ -1858,7 +1862,7 @@ class H5Dataset:
     #######################
     # inflateChunk
     #######################
-    def inflateChunk(self, input, output_size):
+    def inflateChunk(self, input):
         return zlib.decompress(input)
 
     #######################
