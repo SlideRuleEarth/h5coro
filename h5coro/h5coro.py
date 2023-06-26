@@ -1955,6 +1955,14 @@ def workerThread(dataset_worker):
         logger.error(f'H5Coro encountered an error processing {dataset_worker.resourceObject.resource}/{dataset_worker.dataset}: {e}')
         return '',{}
 
+def resultThread(resourceObject):
+    for future in concurrent.futures.as_completed(resourceObject.futures):
+        dataset, values = future.result()
+        resourceObject.conditions[dataset].acquire()
+        resourceObject.results[dataset] = values
+        resourceObject.conditions[dataset].notify()
+        resourceObject.conditions[dataset].release()
+
 ###############################################################################
 # H5Coro Class
 ###############################################################################
@@ -1971,7 +1979,7 @@ class H5Coro:
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, driver_class, datasets=[], credentials={}):
+    def __init__(self, resource, driver_class, datasets=[], credentials={}, block=True):
         self.resource = resource
         self.driver = driver_class(resource, credentials)
 
@@ -1983,19 +1991,31 @@ class H5Coro:
         self.baseAddress = 0
         self.rootAddress = self.readSuperblock()
 
-        self.results = {}
+        self.futures = []
         if len(datasets) > 0:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasets)) as executor:
                 dataset_workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
-                futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
-                for future in concurrent.futures.as_completed(futures):
-                    dataset, values = future.result()
-                    self.results[dataset] = values
+                self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
+
+        self.conditions = {}
+        self.results = {}
+        if block:
+            resultThread(self)
+        else:
+            for dataset in datasets:
+                self.results[dataset] = None
+                self.conditions[dataset] = threading.Condition()
+            threading.Thread(target=resultThread, args=(self,), daemon=True).start()
 
     #######################
     # operator: []
     #######################
     def __getitem__(self, key):
+        if key in self.conditions:
+            self.conditions[key].acquire()
+            while self.results[key] == None:
+                self.conditions[key].wait(1)
+            self.conditions[key].release()
         return self.results[key]
 
     #######################
