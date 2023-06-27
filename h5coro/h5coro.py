@@ -2011,11 +2011,7 @@ class H5Coro:
     # operator: []
     #######################
     def __getitem__(self, key):
-        if key in self.conditions:
-            self.conditions[key].acquire()
-            while self.results[key] == None:
-                self.conditions[key].wait(1)
-            self.conditions[key].release()
+        self.waitOnResult(key)
         return self.results[key]
 
     #######################
@@ -2033,16 +2029,35 @@ class H5Coro:
         return rstr
 
     #######################
-    # print
+    # string
     #######################
     def __str__(self):
         return self.__repr__()
 
     #######################
+    # iterate
+    #######################
+    def __iter__(self):
+        for key in self.results.keys():
+            yield key
+
+    #######################
     # keys
     #######################
     def keys(self):
+        for key in self.results.keys():
+            self.waitOnResult(key)
         return self.results.keys()
+
+    #######################
+    # waitOnResult
+    #######################
+    def waitOnResult(self, dataset):
+        if dataset in self.conditions:
+            self.conditions[dataset].acquire()
+            while self.results[dataset] == None:
+                self.conditions[dataset].wait(1)
+            self.conditions[dataset].release()
 
     #######################
     # ioRequest

@@ -55,4 +55,4 @@ jobs:
       - name: Run tests
         shell: bash -l {0}
         run: |
-          python -m pytest --verbose
+          python -m pytest --verbose -m "not region"

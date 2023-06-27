@@ -7,7 +7,7 @@ from h5coro import filedriver, s3driver
 ATL03_S3_OBJECT = "sliderule/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5"
 ATL03_FILE = "/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5"
 
-@pytest.mark.network
+@pytest.mark.region
 class TestIcesat2:
     def test_s3driver(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, datasets=['/gt2l/heights/h_ph'])
