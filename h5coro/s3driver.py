@@ -47,7 +47,6 @@ class S3Driver:
     # read
     #######################
     def read(self, pos, size):
-        logger.info(f'S3 GET at 0x{pos:x} of size {size}')
         stream = self.obj.get(Range=f'bytes={pos}-{pos+size-1}')['Body']
         return stream.read()
 

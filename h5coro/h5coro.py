@@ -131,6 +131,12 @@ class H5Values:
     def __str__(self):
         return self.__repr__()
 
+    #######################
+    # tolist
+    #######################
+    def tolist(self):
+        return list(self.values)
+
 ###############################################################################
 # H5Dataset Class
 ###############################################################################
@@ -316,7 +322,7 @@ class H5Dataset:
                 buffer = numpy.empty(buffer_size, dtype=numpy.byte)
                 # fill buffer with fill value (if provided)
                 if self.fillsize > 0:
-                    fill_value = numpy.frombuffer(numpy.array([self.fill]).tobytes()[:self.fillsize], dtype=numpy.byte)
+                    fill_value = numpy.frombuffer(numpy.array([self.fillvalue]).tobytes()[:self.fillsize], dtype=numpy.byte)
                     for i in range(0, buffer_size, self.fillsize):
                         buffer[i:i+self.fillsize] = fill_value
 

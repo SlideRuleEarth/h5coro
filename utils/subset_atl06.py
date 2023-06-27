@@ -33,6 +33,7 @@ import time
 import h5coro
 import os
 import configparser
+import warnings
 import s3fs
 import h5py
 from h5coro import s3driver, filedriver
@@ -57,24 +58,19 @@ parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL06_20181
 parser.add_argument('--bucket','-b', type=str, default="sliderule")
 parser.add_argument('--region','-r', type=str, default="us-west-2")
 parser.add_argument('--aoi','-a', type=str, default="data/grandmesa.geojson")
+parser.add_argument('--variable','-x', type=str, default="h_li")
 parser.add_argument('--domain','-d', type=str, default="slideruleearth.io")
 parser.add_argument('--organization','-o', type=str, default="sliderule")
-parser.add_argument('--desired_nodes','-n', type=int, default=3)
+parser.add_argument('--desired_nodes','-n', type=int, default=7)
 parser.add_argument('--time_to_live','-l', type=int, default=120)
+parser.add_argument('--iterations','-i', type=int, default=3)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 args,_ = parser.parse_known_args()
+
 
 ###############################################################################
 # LOCAL CLASSES
 ###############################################################################
-
-#
-# Class: Point
-#
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
 
 #
 # Class: H5CoroReader
@@ -82,7 +78,6 @@ class Point:
 class H5CoroReader:
     def __init__(self, resource,):
         self.resource = resource
-        h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.INFO)
     def read(self, datasets):
         self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver, datasets=datasets, block=True)
         return self.h5obj
@@ -93,7 +88,6 @@ class H5CoroReader:
 class SlideruleReader:
     def __init__(self, resource):
         self.resource = resource
-        sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
     def read(self, datasets):
         values = h5.h5p(datasets, self.resource, "atlas-s3")
         return values
@@ -169,6 +163,16 @@ class Profiler:
         self.duration += time.perf_counter() - start
         return values
 
+#
+# Class: Point
+#
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __str__(self):
+        return f'({self.x},{self.y})'
+
 ###############################################################################
 # LOCAL FUNCTIONS
 ###############################################################################
@@ -207,15 +211,18 @@ class Profiler:
 # DEALINGS IN THE SOFTWARE.
 #
 def inpoly (poly, point):
-    c = False
-    i = 0
-    j = len(poly) - 1
-    while i < len(poly):
-        j = i
-        i += 1
-        x_extent = (poly[j].x - poly[i].x) * (point.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x
-        if ((poly[i].y > point.y) != (poly[j].y > point.y)) and (point.x < x_extent):
-            c = not c
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        c = False
+        i = 0
+        j = len(poly) - 1
+        while i < len(poly):
+            x_extent = (poly[j].x - poly[i].x) * (point.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x
+            if ((poly[i].y > point.y) != (poly[j].y > point.y)) and (point.x < x_extent):
+                c = not c
+            j = i
+            i += 1
 
     # Return Inclusion
     #  if c == False: number of intersections were even --> point is outside polygon
@@ -227,7 +234,7 @@ def inpoly (poly, point):
 #
 # read ATL06 resource and return variable's data within polygon
 #
-def subsetted_read(profiler, region, variable="h_li"):
+def subsetted_read(profiler, region, variable=args.variable):
 
     # Initialize return variables
     data = []
@@ -291,10 +298,18 @@ def subsetted_read(profiler, region, variable="h_li"):
 # MAIN
 ###############################################################################
 
+# Configure H5Coro
+h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.CRITICAL)
+
+# Initialize SlideRule Client
+sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
+
+# Generate Region Polygon
 region = sliderule.toregion(args.aoi)["poly"]
 
+# Build Profilers
 profiles = {
-#    "h5coro":       Profiler(H5CoroReader,      args.granule),
+    "h5coro":       Profiler(H5CoroReader,      args.granule),
 #    "sliderule":    Profiler(SlideruleReader,   args.granule),
 #    "s3fs":         Profiler(S3fsReader,        args.granule),
 #    "ros3":         Profiler(Ros3Reader,        args.granule),
@@ -302,7 +317,13 @@ profiles = {
     "h5coro-local": Profiler(LocalH5CoroReader, args.granule)
 }
 
-subsetted_read(profiles["h5coro-local"], region, variable="h_li")
-
+# Profile Readers
 for profile in profiles:
-    print(f'{profile:10}: {profiles[profile].duration}')
+    profiler = profiles[profile]
+    print(f'Profiling {profile}... ', end='')
+    durations = []
+    for i in range(args.iterations):
+        result = subsetted_read(profiler, region, variable="h_li")
+        durations.append(profiler.duration)
+        profiler.duration = 0
+    print(f'[{len(result[args.variable])}]: {min(durations)}')
