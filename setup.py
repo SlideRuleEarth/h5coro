@@ -31,7 +31,7 @@ setup(
         'Topic :: Scientific/Engineering :: Physics',
         'License :: OSI Approved :: BSD License',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.11',
     ],
     packages=find_packages(),
     version=version,

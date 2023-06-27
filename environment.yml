@@ -1,0 +1,12 @@
+# conda env create -f environment.yml
+name: h5coro
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - pip
+  - pytest
+  - numpy
+  - boto3
+  - h5py
+  - sliderule
