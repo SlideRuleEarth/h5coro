@@ -218,13 +218,18 @@ class H5Dataset:
     #######################
     def __init__(self, resourceObject, dataset, credentials={}):
         self.resourceObject         = resourceObject
-        self.dataset                = dataset
         self.credentials            = credentials
-        self.datasetStartRow        = 0
-        self.datasetNumRows         = self.ALL_ROWS
         self.metaOnly               = False
         self.pos                    = self.resourceObject.rootAddress
-        self.datasetPath            = list(filter(('').__ne__, dataset.split('/')))
+        if type(dataset) == str:
+            self.dataset            = dataset
+            self.datasetStartRow    = 0
+            self.datasetNumRows     = self.ALL_ROWS
+        else: # dataset is dict
+            self.dataset            = dataset['dataset']
+            self.datasetStartRow    = dataset['startrow']
+            self.datasetNumRows     = dataset['numrows']
+        self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
         self.datasetFound           = False
         self.ndims                  = None
         self.dimensions             = []
@@ -1953,7 +1958,7 @@ def workerThread(dataset_worker):
         return dataset_worker.readDataset()
     except FatalError as e:
         logger.error(f'H5Coro encountered an error processing {dataset_worker.resourceObject.resource}/{dataset_worker.dataset}: {e}')
-        return '',{}
+        return dataset_worker.dataset,{}
 
 def resultThread(resourceObject):
     for future in concurrent.futures.as_completed(resourceObject.futures):
@@ -1997,14 +2002,16 @@ class H5Coro:
                 dataset_workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
                 self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
 
-        self.conditions = {}
         self.results = {}
+        self.conditions = {}
+        for dataset in datasets:
+            dataset_name = type(dataset) == str and dataset or dataset['dataset']
+            self.results[dataset_name] = None
+            self.conditions[dataset_name] = threading.Condition()
+
         if block:
             resultThread(self)
         else:
-            for dataset in datasets:
-                self.results[dataset] = None
-                self.conditions[dataset] = threading.Condition()
             threading.Thread(target=resultThread, args=(self,), daemon=True).start()
 
     #######################

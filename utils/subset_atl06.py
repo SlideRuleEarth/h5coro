@@ -42,14 +42,6 @@ from sliderule import sliderule, h5
 # GLOBALS
 ###############################################################################
 
-# profiles
-profiles = {
-    "h5coro": 0,
-    "sliderule": 0,
-    "s3fs": 0,
-    "ros3": 0
-}
-
 # Setup Config Parser for Credentials
 home_directory          = os.path.expanduser('~')
 aws_credential_file     = os.path.join(home_directory, '.aws', 'credentials')
@@ -64,12 +56,11 @@ parser = argparse.ArgumentParser(description="""Subset ATL06 granules""")
 parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
 parser.add_argument('--bucket','-b', type=str, default="sliderule")
 parser.add_argument('--region','-r', type=str, default="us-west-2")
-parser.add_argument('--aoi','-a', type=str, default="grandmesa.geojson")
+parser.add_argument('--aoi','-a', type=str, default="data/grandmesa.geojson")
 parser.add_argument('--domain','-d', type=str, default="slideruleearth.io")
-parser.add_argument('--organization','-o', type=str, default="esr")
+parser.add_argument('--organization','-o', type=str, default="sliderule")
 parser.add_argument('--desired_nodes','-n', type=int, default=3)
 parser.add_argument('--time_to_live','-l', type=int, default=120)
-parser.add_argument('--log_file', '-f', type=str, default="esr.log")
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 args,_ = parser.parse_known_args()
 
@@ -78,16 +69,22 @@ args,_ = parser.parse_known_args()
 ###############################################################################
 
 #
+# Class: Point
+#
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+#
 # Class: H5CoroReader
 #
 class H5CoroReader:
-    def __init__(self, resource):
+    def __init__(self, resource,):
         self.resource = resource
         h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.INFO)
     def read(self, datasets):
-        start = time.perf_counter()
-        self.h5obj = h5coro.H5Coro(self.resource, s3driver.S3Driver, datasets=datasets, block=True)
-        profiles["h5coro"] = time.perf_counter() - start
+        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver, datasets=datasets, block=True)
         return self.h5obj
 
 #
@@ -96,11 +93,9 @@ class H5CoroReader:
 class SlideruleReader:
     def __init__(self, resource):
         self.resource = resource
-        sliderule.init(args.domain, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
+        sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
     def read(self, datasets):
-        start = time.perf_counter()
-        values = h5.h5p(datasets, self.resource, "icesat2")
-        profiles["sliderule"] = time.perf_counter() - start
+        values = h5.h5p(datasets, self.resource, "atlas-s3")
         return values
 
 #
@@ -113,11 +108,9 @@ class S3fsReader:
         resource_path = "s3://" + args.bucket + self.resource
         self.f = h5py.File(s3.open(resource_path, 'rb'), mode='r')
     def read(self, datasets):
-        start = time.perf_counter()
         values = {}
         for dataset in datasets:
             values[dataset] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
-        profiles["s3fs"] = time.perf_counter() - start
         return values
 
 #
@@ -131,14 +124,25 @@ class Ros3Reader:
         secret_id = config.get('default', 'aws_secret_access_key')
         secret_key = config.get('default', 'aws_session_token')
         resource_path = f'http://s3.{args.region}.amazonaws.com/' + args.bucket + self.resource
-        self.f = h5py.File(resource_path, driver="ros3", aws_region=aws_region, secret_id=secret_id, secret_key=secret_key)
+        self.f = h5py.File(resource_path, driver="ros3", aws_region=aws_region, secret_id=secret_id, secret_key=secret_key, mode='r')
     def read(self, datasets):
-        start = time.perf_counter()
         values = {}
         for dataset in datasets:
             values[dataset] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
-        profiles["ros3"] = time.perf_counter() - start
         return values
+
+#
+# Class: H5pyReader
+#
+class H5pyReader:
+    def __init__(self, resource):
+        self.resource = resource
+        self.f = h5py.File(args.granule, mode='r')
+    def read(self, datasets):
+        values = {}
+        for dataset in datasets:
+            values[dataset] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
+        return self.h5obj
 
 #
 # Class: LocalH5CoroReader
@@ -148,18 +152,21 @@ class LocalH5CoroReader:
         self.resource = resource
         h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.INFO)
     def read(self, datasets):
-        start = time.perf_counter()
         self.h5obj = h5coro.H5Coro(self.resource, filedriver.FileDriver, datasets=datasets, block=True)
-        profiles["h5coro"] = time.perf_counter() - start
         return self.h5obj
 
 #
-# Class: Point
+# Class: Profiler
 #
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+class Profiler:
+    def __init__(self, reader_class, resource):
+        start = time.perf_counter()
+        self.reader = reader_class(resource)
+        self.duration = time.perf_counter() - start
+    def read(self, datasets):
+        start = time.perf_counter()
+        self.reader.read(datasets)
+        self.duration += time.perf_counter() - start
 
 ###############################################################################
 # LOCAL FUNCTIONS
@@ -219,7 +226,7 @@ def inpoly (poly, point):
 #
 # read ATL06 resource and return variable's data within polygon
 #
-def subsetted_read(reader, region, variable="h_li"):
+def subsetted_read(profiler, region, variable="h_li"):
 
     # Initialize return variables
     data = []
@@ -240,7 +247,7 @@ def subsetted_read(reader, region, variable="h_li"):
         geodatasets.append({"dataset": prefix+"longitude", "startrow": 0, "numrows": -1})
 
     # Read lat,lon from resource
-    geocoords = reader.read(geodatasets)
+    geocoords = profiler.read(geodatasets)
 
     # Build list of the subsetted h_li datasets to read
     datasets = []
@@ -266,7 +273,7 @@ def subsetted_read(reader, region, variable="h_li"):
 
     # Read h_li from resource
     if len(datasets) > 0:
-        values = reader.read(datasets)
+        values = profiler.read(datasets)
 
     # Append results
     for entry in datasets:
@@ -285,4 +292,16 @@ def subsetted_read(reader, region, variable="h_li"):
 
 region = sliderule.toregion(args.aoi)["poly"]
 
-print(profiles)
+profiles = {
+    "h5coro":       Profiler(H5CoroReader,      args.granule),
+    "sliderule":    Profiler(SlideruleReader,   args.granule),
+    "s3fs":         Profiler(S3fsReader,        args.granule),
+#    "ros3":         Profiler(Ros3Reader,        args.granule),
+    "h5py-local":   Profiler(H5pyReader,        args.granule),
+    "h5coro-local": Profiler(LocalH5CoroReader, args.granule)
+}
+
+subsetted_read(profiles["h5coro-local"], region, variable="h_li")
+
+for profile in profiles:
+    print(f'{profile:10}: {profiles[profile].duration}')
