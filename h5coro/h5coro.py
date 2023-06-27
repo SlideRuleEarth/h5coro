@@ -1584,7 +1584,6 @@ class H5Dataset:
             # indirect blocks
             bytes_read = self.readIndirectBlock(heap_info, 0, obj_hdr_flags, dlvl)
             self.pos = return_position + bytes_read
-            logger.info(f'RETURNING TO: 0x{self.pos:x}')
 
         # check bytes read
         if errorCheckingOption and (bytes_read > heap_info['starting_blk_size']):
@@ -1637,7 +1636,8 @@ class H5Dataset:
                 early_exit = True
             self.pos = peak_addr
             if early_exit:
-                logger.info(f'exiting direct block 0x{starting_position:x} early at 0x{self.pos:x}')
+                if verboseOption:
+                    logger.info(f'exiting direct block 0x{starting_position:x} early at 0x{self.pos:x}')
                 break
 
             # read message
@@ -1940,9 +1940,9 @@ class H5Dataset:
             raise FatalError(f'invalid data size to perform shuffle on: {type_size}')
         output = numpy.empty(output_size, dtype=numpy.byte)
         dst_index = 0
-        shuffle_block_size = len(input) / type_size
-        num_elements = output_size / type_size
-        start_element = output_offset / type_size
+        shuffle_block_size = int(len(input) / type_size)
+        num_elements = int(output_size / type_size)
+        start_element = int(output_offset / type_size)
         for element_index in range(start_element, start_element + num_elements):
             for val_index in range(0, type_size):
                 src_index = (val_index * shuffle_block_size) + element_index

@@ -27,221 +27,27 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
-import argparse
+import sys
 import time
-import h5coro
-import os
-import configparser
-import warnings
-import s3fs
-import h5py
-from h5coro import s3driver, filedriver
-from sliderule import sliderule, h5
-
-###############################################################################
-# GLOBALS
-###############################################################################
-
-# Setup Config Parser for Credentials
-home_directory          = os.path.expanduser('~')
-aws_credential_file     = os.path.join(home_directory, '.aws', 'credentials')
-config                  = configparser.RawConfigParser()
-credentials             = {}
-
-###############################################################################
-# COMMAND LINE ARGUMENTS
-###############################################################################
-
-parser = argparse.ArgumentParser(description="""Subset ATL06 granules""")
-parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL06_20181017222812_02950102_005_01.h5")
-parser.add_argument('--bucket','-b', type=str, default="sliderule")
-parser.add_argument('--region','-r', type=str, default="us-west-2")
-parser.add_argument('--aoi','-a', type=str, default="data/grandmesa.geojson")
-parser.add_argument('--variable','-x', type=str, default="h_li")
-parser.add_argument('--domain','-d', type=str, default="slideruleearth.io")
-parser.add_argument('--organization','-o', type=str, default="sliderule")
-parser.add_argument('--desired_nodes','-n', type=int, default=7)
-parser.add_argument('--time_to_live','-l', type=int, default=120)
-parser.add_argument('--iterations','-i', type=int, default=3)
-parser.add_argument('--verbose','-v', action='store_true', default=False)
-args,_ = parser.parse_known_args()
-if args.organization == "None":
-    args.organization = None
-
-###############################################################################
-# LOCAL CLASSES
-###############################################################################
-
-#
-# Class: H5CoroReader
-#
-class H5CoroReader:
-    def __init__(self, resource,):
-        self.resource = resource
-    def read(self, datasets):
-        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver, datasets=datasets, block=True)
-        return self.h5obj
-
-#
-# Class: SlideruleReader
-#
-class SlideruleReader:
-    def __init__(self, resource):
-        self.resource = resource
-    def read(self, datasets):
-        values = h5.h5p(datasets, self.resource.split('/')[-1], "atlas-s3")
-        return values
-
-#
-# Class: S3fsReader
-#
-class S3fsReader:
-    def __init__(self, resource):
-        self.resource = resource
-        s3 = s3fs.S3FileSystem()
-        resource_path = "s3://" + args.bucket + self.resource
-        self.f = h5py.File(s3.open(resource_path, 'rb'), mode='r')
-    def read(self, datasets):
-        values = {}
-        for dataset in datasets:
-            values[dataset['dataset']] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
-        return values
-
-#
-# Class: Ros3Reader
-#
-class Ros3Reader:
-    def __init__(self, resource):
-        self.resource = resource
-        config.read(aws_credential_file)
-        aws_region = config.get('default', 'aws_access_key_id').encode("utf-8")
-        secret_id = config.get('default', 'aws_secret_access_key').encode("utf-8")
-        secret_key = config.get('default', 'aws_session_token').encode("utf-8")
-        resource_path = f'http://s3.{args.region}.amazonaws.com/' + args.bucket + self.resource
-        print(resource_path)
-        self.f = h5py.File(resource_path, driver="ros3", aws_region=aws_region, secret_id=secret_id, secret_key=secret_key, mode='r')
-    def read(self, datasets):
-        values = {}
-        for dataset in datasets:
-            values[dataset['dataset']] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
-        return values
-
-#
-# Class: H5pyReader
-#
-class H5pyReader:
-    def __init__(self, resource):
-        self.resource = resource
-        self.f = h5py.File(args.granule, mode='r')
-    def read(self, datasets):
-        values = {}
-        for dataset in datasets:
-            values[dataset['dataset']] = self.f[dataset['dataset']][dataset['startrow']:dataset['startrow']+dataset['numrows']]
-        return values
-
-#
-# Class: LocalH5CoroReader
-#
-class LocalH5CoroReader:
-    def __init__(self, resource):
-        self.resource = resource
-        h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.INFO)
-    def read(self, datasets):
-        self.h5obj = h5coro.H5Coro(self.resource, filedriver.FileDriver, datasets=datasets, block=True)
-        return self.h5obj
-
-#
-# Class: Profiler
-#
-class Profiler:
-    def __init__(self, reader_class, resource):
-        start = time.perf_counter()
-        self.reader = reader_class(resource)
-        self.duration = time.perf_counter() - start
-    def read(self, datasets):
-        start = time.perf_counter()
-        values = self.reader.read(datasets)
-        self.duration += time.perf_counter() - start
-        return values
-
-#
-# Class: Point
-#
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-    def __str__(self):
-        return f'({self.x},{self.y})'
+from sliderule import icesat2
+from utils import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsReader, Ros3Reader, H5pyReader, LocalH5CoroReader, inpoly, region
 
 ###############################################################################
 # LOCAL FUNCTIONS
 ###############################################################################
 
 #
-# Function: inpoly
-#
-# Algorithm based off of https://wrf.ecse.rpi.edu/Research/Short_Notes/pnpoly.html;
-# the copyright notice associated with code provided on the website is reproduced
-# below:
-#
-#
-# Copyright (c) 1970-2003, Wm. Randolph Franklin
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this
-# software and associated documentation files (the "Software"), to deal in the Software
-# without restriction, including without limitation the rights to use, copy, modify,
-# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to the following
-# conditions:
-#
-#   Redistributions of source code must retain the above copyright notice, this list of
-#   conditions and the following disclaimers.
-#
-#   Redistributions in binary form must reproduce the above copyright notice in the
-#   documentation and/or other materials provided with the distribution.
-#
-#   The name of W. Randolph Franklin may not be used to endorse or promote products derived
-#   from this Software without specific prior written permission.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-# PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
-# FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-# OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-#
-def inpoly (poly, point):
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        c = False
-        i = 0
-        j = len(poly) - 1
-        while i < len(poly):
-            x_extent = (poly[j].x - poly[i].x) * (point.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x
-            if ((poly[i].y > point.y) != (poly[j].y > point.y)) and (point.x < x_extent):
-                c = not c
-            j = i
-            i += 1
-
-    # Return Inclusion
-    #  if c == False: number of intersections were even --> point is outside polygon
-    #  if c == True: number of intersections were odd --> point is inside polygon
-    return c
-
-#
 # Function: subsetted_read
 #
 # read ATL06 resource and return variable's data within polygon
 #
-def subsetted_read(profiler, region, variable=args.variable):
+def subsetted_read(profiler, region, variable):
 
     # Initialize return variables
     data = []
     latitudes = []
     longitudes = []
+    distances = []
 
     # Create polygon
     poly = [Point(coord["lon"], coord["lat"]) for coord in region]
@@ -252,19 +58,22 @@ def subsetted_read(profiler, region, variable=args.variable):
     # Build list of each lat,lon dataset to read
     geodatasets = []
     for track in tracks:
-        prefix = "/gt"+track+"/land_ice_segments/"
-        geodatasets.append({"dataset": prefix+"latitude", "startrow": 0, "numrows": -1})
-        geodatasets.append({"dataset": prefix+"longitude", "startrow": 0, "numrows": -1})
+        prefix = "/gt"+track+"/geolocation/"
+        geodatasets.append({"dataset": prefix+"reference_photon_lat", "startrow": 0, "numrows": -1})
+        geodatasets.append({"dataset": prefix+"reference_photon_lon", "startrow": 0, "numrows": -1})
+        geodatasets.append({"dataset": prefix+"segment_ph_cnt", "startrow": 0, "numrows": -1})
 
     # Read lat,lon from resource
     geocoords = profiler.read(geodatasets)
 
-    # Build list of the subsetted h_li datasets to read
+    # Build list of the subsetted variable datasets to read
     datasets = []
     for track in tracks:
-        prefix = "/gt"+track+"/land_ice_segments/"
-        lat_dataset = geocoords[prefix+"latitude"]
-        lon_dataset = geocoords[prefix+"longitude"]
+        geoprefix = "/gt"+track+"/geolocation/"
+        prefix = "/gt"+track+"/heights/"
+        lat_dataset = geocoords[geoprefix+"reference_photon_lat"]
+        lon_dataset = geocoords[geoprefix+"reference_photon_lon"]
+        cnt_dataset = geocoords[geoprefix+"segment_ph_cnt"]
         startrow = -1
         numrows = -1
         index = 0
@@ -279,53 +88,68 @@ def subsetted_read(profiler, region, variable=args.variable):
         if startrow >= 0:
             numrows = index - startrow
         if numrows > 0:
-            datasets.append({"dataset": prefix+variable, "startrow": startrow, "numrows": numrows, "prefix": prefix})
+            start_ph = int(sum(cnt_dataset[:startrow]))
+            num_ph = int(sum(cnt_dataset[startrow:startrow+numrows]))
+            datasets.append({"dataset": prefix+variable, "startrow": start_ph, "numrows": num_ph, "prefix": prefix, "geoprefix": geoprefix})
+            datasets.append({"dataset": prefix+"dist_ph_along", "startrow": start_ph, "numrows": num_ph, "prefix": prefix, "geoprefix": geoprefix})
 
-    # Read h_li from resource
+    # Read variable from resource
     if len(datasets) > 0:
         values = profiler.read(datasets)
 
     # Append results
     for entry in datasets:
-        latitudes += geocoords[entry["prefix"]+"latitude"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
-        longitudes += geocoords[entry["prefix"]+"longitude"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
+        segments = geocoords[entry["geoprefix"]+"segment_ph_cnt"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
+        k = 0
+        for num_ph in segments:
+            for i in range(num_ph):
+                latitudes += [geocoords[entry["geoprefix"]+"reference_photon_lat"][entry["startrow"]+i]]
+                longitudes += [geocoords[entry["geoprefix"]+"reference_photon_lon"][entry["startrow"]+i]]
+                distances += [geocoords[entry["geoprefix"]+"segment_dist_x"][entry["startrow"]+i] + values[entry["prefix"]+"dist_ph_along"][k]]
+                k += 1
         data += values[entry["prefix"]+variable].tolist()
 
     # Return results
     return {"latitude":  latitudes,
             "longitude": longitudes,
+            "distances": distances,
             variable:    data}
 
 ###############################################################################
 # MAIN
 ###############################################################################
 
-# Configure H5Coro
-h5coro.config(errorChecking=False, verbose=False, enableAttributes=False, logLevel=logging.CRITICAL)
-
-# Initialize SlideRule Client
-sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
-
-# Generate Region Polygon
-region = sliderule.toregion(args.aoi)["poly"]
-
 # Build Profilers
 profiles = {
-    "h5coro":       Profiler(H5CoroReader,      args.granule),
-    "sliderule":    Profiler(SlideruleReader,   args.granule),
-    "s3fs":         Profiler(S3fsReader,        args.granule),
-#    "ros3":         Profiler(Ros3Reader,        args.granule),
-    "h5py-local":   Profiler(H5pyReader,        args.granule),
-    "h5coro-local": Profiler(LocalH5CoroReader, args.granule)
+    "h5coro":       Profiler(H5CoroReader,      args.granule03),
+    "sliderule":    Profiler(SlideruleReader,   args.granule03),
+    "s3fs":         Profiler(S3fsReader,        args.granule03),
+#    "ros3":         Profiler(Ros3Reader,        args.granule03),
+    "h5py-local":   Profiler(H5pyReader,        args.granule03),
+    "h5coro-local": Profiler(LocalH5CoroReader, args.granule03)
 }
 
 # Profile Readers
 for profile in profiles:
     profiler = profiles[profile]
     print(f'Profiling {profile}... ', end='')
-    durations = []
-    for i in range(args.iterations):
-        result = subsetted_read(profiler, region, variable="h_li")
-        durations.append(profiler.duration)
-        profiler.duration = 0
-    print(f'[{len(result[args.variable])}]: {min(durations)}')
+    sys.stdout.flush()
+    start = time.perf_counter()
+    result = subsetted_read(profiler, region, variable=args.variable03)
+    print(f'[{len(result[args.variable03])}]: {profiler.duration} {time.perf_counter() - start}')
+
+# Profile SlideRule ATL03 Subsetter - flatrec03 issue
+#parms = {
+#    "poly": region,
+#    "srt": icesat2.SRT_LAND,
+#    "len": 40,
+#    "res": 40,
+#    "pass_invalid": True,
+#    "cnf": -2,
+#    "output": { "path": "grandmesa.parquet", "format": "parquet", "open_on_complete": False }
+#}
+#start = time.perf_counter()
+#gdf = icesat2.atl03sp(parms, asset="atlas-s3", resources=[args.granule03.split('/')[-1]])
+#duration = time.perf_counter() - start
+#print(gdf)
+#print(duration)
