@@ -53,7 +53,7 @@ credentials             = {}
 ###############################################################################
 
 parser = argparse.ArgumentParser(description="""Subset ATL06 granules""")
-parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
+parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL06_20181017222812_02950102_005_01.h5")
 parser.add_argument('--bucket','-b', type=str, default="sliderule")
 parser.add_argument('--region','-r', type=str, default="us-west-2")
 parser.add_argument('--aoi','-a', type=str, default="data/grandmesa.geojson")
@@ -165,8 +165,9 @@ class Profiler:
         self.duration = time.perf_counter() - start
     def read(self, datasets):
         start = time.perf_counter()
-        self.reader.read(datasets)
+        values = self.reader.read(datasets)
         self.duration += time.perf_counter() - start
+        return values
 
 ###############################################################################
 # LOCAL FUNCTIONS
@@ -293,11 +294,11 @@ def subsetted_read(profiler, region, variable="h_li"):
 region = sliderule.toregion(args.aoi)["poly"]
 
 profiles = {
-    "h5coro":       Profiler(H5CoroReader,      args.granule),
-    "sliderule":    Profiler(SlideruleReader,   args.granule),
-    "s3fs":         Profiler(S3fsReader,        args.granule),
+#    "h5coro":       Profiler(H5CoroReader,      args.granule),
+#    "sliderule":    Profiler(SlideruleReader,   args.granule),
+#    "s3fs":         Profiler(S3fsReader,        args.granule),
 #    "ros3":         Profiler(Ros3Reader,        args.granule),
-    "h5py-local":   Profiler(H5pyReader,        args.granule),
+#    "h5py-local":   Profiler(H5pyReader,        args.granule),
     "h5coro-local": Profiler(LocalH5CoroReader, args.granule)
 }
 

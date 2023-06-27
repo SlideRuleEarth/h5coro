@@ -114,6 +114,12 @@ class H5Values:
         return self.values[key]
 
     #######################
+    # length
+    #######################
+    def __len__(self):
+        return len(self.values)
+
+    #######################
     # representation
     #######################
     def __repr__(self):
