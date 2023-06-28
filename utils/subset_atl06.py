@@ -105,10 +105,10 @@ def subsetted_read(profiler, region, variable):
 
 # Build Profilers
 profiles = {
-    "h5coro":       Profiler(H5CoroReader,      args.granule06),
-    "sliderule":    Profiler(SlideruleReader,   args.granule06),
     "s3fs":         Profiler(S3fsReader,        args.granule06),
 #    "ros3":         Profiler(Ros3Reader,        args.granule06),
+    "sliderule-h5p":Profiler(SlideruleReader,   args.granule06),
+    "h5coro":       Profiler(H5CoroReader,      args.granule06),
     "h5py-local":   Profiler(H5pyReader,        args.granule06),
     "h5coro-local": Profiler(LocalH5CoroReader, args.granule06)
 }

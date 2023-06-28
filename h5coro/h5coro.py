@@ -33,6 +33,7 @@ import threading
 import struct
 import logging
 import zlib
+import sys
 import numpy
 
 ###############################################################################
@@ -81,7 +82,7 @@ def config( errorChecking=errorCheckingOption,
     enableAttributesOption = enableAttributes
     cacheLineSizeOption = cacheLineSize
     if logLevel != None:
-        logging.basicConfig(level=logLevel, format=logFormat)
+        logging.basicConfig(stream=sys.stdout, level=logLevel, format=logFormat)
 
 ###############################################################################
 # EXCEPTIONS
@@ -228,20 +229,15 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, credentials={}):
+    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS):
         self.resourceObject         = resourceObject
-        self.credentials            = credentials
         self.metaOnly               = False
         self.pos                    = self.resourceObject.rootAddress
-        if type(dataset) == str:
-            self.dataset            = dataset
-            self.datasetStartRow    = 0
-            self.datasetNumRows     = self.ALL_ROWS
-        else: # dataset is dict
-            self.dataset            = dataset['dataset']
-            self.datasetStartRow    = dataset['startrow']
-            self.datasetNumRows     = dataset['numrows']
+        self.dataset                = dataset
+        self.datasetStartRow        = startRow
+        self.datasetNumRows         = numRows
         self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
+        self.datasetPathLevels      = len(self.datasetPath)
         self.datasetFound           = False
         self.ndims                  = None
         self.dimensions             = []
@@ -287,9 +283,6 @@ class H5Dataset:
     #######################
     def readDataset(self):
         # traverse file for dataset
-        #
-        #   ... here is where we can check self cache for
-        #       group info and jump right to it
         dataset_level = 0
         self.readObjHdr(dataset_level)
 
@@ -457,6 +450,14 @@ class H5Dataset:
     # readObjHdr
     #######################
     def readObjHdr(self, dlvl):
+        # check mata data table
+        for lvl in range(self.datasetPathLevels, dlvl, -1):
+            group_path = '/'.join(self.datasetPath[:lvl])
+            if group_path in self.resourceObject.metaDataTable:
+                self.pos = self.resourceObject.metaDataTable[group_path]
+                self.resourceObject.metaDataHits += 1
+                dlvl = lvl
+        # process header
         version_peek = self.readField(1)
         self.pos -= 1
         if version_peek == 1:
@@ -492,7 +493,7 @@ class H5Dataset:
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
                 birth_time = self.readField(4)
-                logger.info(f'<<Object Information V0 [{dlvl}] @0x{starting_position:x}>>')
+                logger.info(f'<<Object Information V0 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
                 logger.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
                 logger.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
                 logger.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
@@ -565,7 +566,7 @@ class H5Dataset:
         if verboseOption:
             # read number of header messages
             num_hdr_msgs = self.readField(2)
-            logger.info(f'<<Object Information V1 [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Object Information V1 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'# Header Messages:    {num_hdr_msgs}')
 
             # read object reference count
@@ -655,7 +656,7 @@ class H5Dataset:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
             if verboseOption:
-                logger.info(f'<<Skipped Message [{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
+                logger.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
             return msg_size
 
@@ -672,7 +673,7 @@ class H5Dataset:
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
         if verboseOption:
-            logger.info(f'<<Dataspace Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Dataspace Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Dimensionality:       {dimensionality}')
             logger.info(f'Flags:                {flags}')
@@ -715,7 +716,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Link Information Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Link Information Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -766,7 +767,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Data Type Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Data Type Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Type Size:            {self.typeSize}')
             logger.info(f'Data Type:            {self.type}')
@@ -892,7 +893,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Fill Value Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Fill Value Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
@@ -949,7 +950,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Link Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Link Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -996,6 +997,9 @@ class H5Dataset:
             obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
             if verboseOption:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
+            # update meta data table
+            group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
+            self.resourceObject.metaDataTable[group_path] = obj_hdr_addr
             # follow link
             if follow_link:
                 return_position = self.pos
@@ -1038,7 +1042,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Data Layout Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Data Layout Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Layout:               {self.layout}')
 
@@ -1098,7 +1102,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Filter Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Filter Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Num Filters:          {num_filters}')
 
@@ -1171,7 +1175,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Attribute Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Attribute Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
 
         # check version
@@ -1235,7 +1239,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Header Continuation Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Header Continuation Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Offset:               0x{hc_offset:x}')
             logger.info(f'Length:               {hc_length}')
 
@@ -1279,7 +1283,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Symbol Table Message [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Symbol Table Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'B-Tree Address:       {btree_addr}')
             logger.info(f'Heap Address:         {heap_addr}')
 
@@ -1379,7 +1383,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Attribute Info [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Attribute Info - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
             logger.info(f'Flags:                {flags}')
 
@@ -1424,7 +1428,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Symbol Table [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Symbol Table - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and version
         if errorCheckingOption:
@@ -1464,6 +1468,10 @@ class H5Dataset:
             if verboseOption:
                 logger.info(f'Link Name:            {link_name}')
                 logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
+
+            # update meta data table
+            group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
+            self.resourceObject.metaDataTable[group_path] = obj_hdr_addr
 
             # process link
             return_position = self.pos
@@ -1514,7 +1522,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Fractal Heap [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<Fractal Heap - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Heap ID Length:       {heap_obj_id_len}')
             logger.info(f'I/O Filters Length:   {io_filter_len}')
             logger.info(f'Flags:                {flags}')
@@ -1600,7 +1608,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Direct Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            logger.info(f'<<Direct Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if errorCheckingOption:
@@ -1672,7 +1680,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<Indirect Block [{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            logger.info(f'<<Indirect Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if errorCheckingOption:
@@ -1765,7 +1773,7 @@ class H5Dataset:
 
         # display
         if verboseOption:
-            logger.info(f'<<B-Tree Node [{dlvl}] @0x{starting_position:x}>>')
+            logger.info(f'<<B-Tree Node - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and node type
         if errorCheckingOption:
@@ -1996,12 +2004,15 @@ class H5Coro:
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, driver_class, datasets=[], credentials={}, block=True):
+    def __init__(self, resource, driver_class, credentials={}, datasets=[], block=True):
         self.resource = resource
         self.driver = driver_class(resource, credentials)
 
         self.lock = threading.Lock()
         self.cache = {}
+
+        self.metaDataTable = {}
+        self.metaDataHits = 0
 
         self.offsetSize = 0
         self.lengthSize = 0
@@ -2009,18 +2020,39 @@ class H5Coro:
         self.rootAddress = self.readSuperblock()
 
         self.futures = []
-        if len(datasets) > 0:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasets)) as executor:
-                dataset_workers = [H5Dataset(self, dataset, credentials) for dataset in datasets]
-                self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
-
         self.results = {}
         self.conditions = {}
-        for dataset in datasets:
-            dataset_name = type(dataset) == str and dataset or dataset['dataset']
-            self.results[dataset_name] = None
-            self.conditions[dataset_name] = threading.Condition()
 
+        self.readDatasets(datasets, block)
+
+    #######################
+    # readDatasets
+    #######################
+    def readDatasets(self, datasets, block):
+
+        # check if datasets supplied
+        if len(datasets) <= 0:
+            return
+
+        # make into dictionary
+        dataset_table = {}
+        for dataset in datasets:
+            if type(dataset) == str:
+                dataset_table[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
+            else:
+                dataset_table[dataset["dataset"]] = dataset
+
+        # start threads working on each dataset
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table)) as executor:
+            dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"]) for dataset in dataset_table.values()]
+            self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
+
+        # initialize results and conditionals for each dataset being read
+        for dataset in dataset_table.keys():
+            self.results[dataset] = None
+            self.conditions[dataset] = threading.Condition()
+
+        # wait for results to be populated OR populate results in the background
         if block:
             resultThread(self)
         else:

@@ -115,16 +115,45 @@ def subsetted_read(profiler, region, variable):
             "distances": distances,
             variable:    data}
 
+#
+# Function: sliderule_request
+#
+# request subsetting from sliderule for ATL03
+#
+def sliderule_request(region, parquet_file=None, open_on_complete=False, geo_fields=[], ph_fields=[]):
+    parms = {
+        "poly":         region,
+        "srt":          icesat2.SRT_LAND,
+        "len":          40,
+        "res":          40,
+        "pass_invalid": True,
+        "cnf":          -2,
+    }
+
+    if parquet_file != None:
+        parms["output"] = { "path": parquet_file, "format": "parquet", "open_on_complete": open_on_complete }
+
+    if len(geo_fields) > 0:
+        parms["atl03_geo_fields"] = geo_fields
+
+    if len(ph_fields) > 0:
+        parms["atl03_ph_fields"] = ph_fields
+
+    start = time.perf_counter()
+    gdf = icesat2.atl03sp(parms, asset="atlas-s3", resources=[args.granule03.split('/')[-1]])
+    duration = time.perf_counter() - start
+    return len(gdf), duration
+
 ###############################################################################
 # MAIN
 ###############################################################################
 
 # Build Profilers
 profiles = {
-    "h5coro":       Profiler(H5CoroReader,      args.granule03),
-    "sliderule":    Profiler(SlideruleReader,   args.granule03),
     "s3fs":         Profiler(S3fsReader,        args.granule03),
 #    "ros3":         Profiler(Ros3Reader,        args.granule03),
+    "sliderule-h5p":Profiler(SlideruleReader,   args.granule03),
+    "h5coro":       Profiler(H5CoroReader,      args.granule03),
     "h5py-local":   Profiler(H5pyReader,        args.granule03),
     "h5coro-local": Profiler(LocalH5CoroReader, args.granule03)
 }
@@ -139,17 +168,6 @@ for profile in profiles:
     print(f'[{len(result[args.variable03])}]: {profiler.duration} {time.perf_counter() - start}')
 
 # Profile SlideRule ATL03 Subsetter - flatrec03 issue
-#parms = {
-#    "poly": region,
-#    "srt": icesat2.SRT_LAND,
-#    "len": 40,
-#    "res": 40,
-#    "pass_invalid": True,
-#    "cnf": -2,
-#    "output": { "path": "grandmesa.parquet", "format": "parquet", "open_on_complete": False }
-#}
-#start = time.perf_counter()
-#gdf = icesat2.atl03sp(parms, asset="atlas-s3", resources=[args.granule03.split('/')[-1]])
-#duration = time.perf_counter() - start
-#print(gdf)
-#print(duration)
+#print(f'Profiling sliderule-atl03s...', end='')
+#num_photons, duration = sliderule_request(region, "atl03.parquet")
+#print(f'[{num_photons}]: {duration}')

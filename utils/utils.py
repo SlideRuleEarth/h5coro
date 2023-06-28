@@ -53,7 +53,7 @@ credentials             = {}
 # COMMAND LINE ARGUMENTS
 ###############################################################################
 
-parser = argparse.ArgumentParser(description="""Subset ATL03 granules""")
+parser = argparse.ArgumentParser(description="""Subset granules""")
 parser.add_argument('--granule03','-p', type=str, default="/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
 parser.add_argument('--granule06','-c', type=str, default="/data/ATLAS/ATL06_20181017222812_02950102_005_01.h5")
 parser.add_argument('--bucket','-b', type=str, default="sliderule")
@@ -65,7 +65,6 @@ parser.add_argument('--domain','-d', type=str, default="slideruleearth.io")
 parser.add_argument('--organization','-o', type=str, default="sliderule")
 parser.add_argument('--desired_nodes','-n', type=int, default=7)
 parser.add_argument('--time_to_live','-l', type=int, default=120)
-parser.add_argument('--iterations','-i', type=int, default=3)
 parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--enableAttributes','-t', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
@@ -97,7 +96,7 @@ sliderule.init(args.domain, verbose=args.verbose, organization=args.organization
 region = sliderule.toregion(args.aoi)["poly"]
 
 ###############################################################################
-# LOCAL CLASSES
+# READER CLASSES
 ###############################################################################
 
 #
@@ -106,8 +105,9 @@ region = sliderule.toregion(args.aoi)["poly"]
 class H5CoroReader:
     def __init__(self, resource,):
         self.resource = resource
+        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver)
     def read(self, datasets):
-        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver, datasets=datasets, block=True)
+        self.h5obj.readDatasets(datasets=datasets, block=True)
         return self.h5obj
 
 #
@@ -191,6 +191,10 @@ class Profiler:
         self.duration += time.perf_counter() - start
         return values
 
+###############################################################################
+# MATH UTILITIES
+###############################################################################
+
 #
 # Class: Point
 #
@@ -200,10 +204,6 @@ class Point:
         self.y = y
     def __str__(self):
         return f'({self.x},{self.y})'
-
-###############################################################################
-# LOCAL FUNCTIONS
-###############################################################################
 
 #
 # Function: inpoly
