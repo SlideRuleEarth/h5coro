@@ -119,4 +119,4 @@ for profile in profiles:
     print(f'Profiling {profile}... ', end='')
     start = time.perf_counter()
     result = subsetted_read(profiler, region, variable=args.variable06)
-    print(f'[{len(result[args.variable06])}]: {profiler.duration} {time.perf_counter() - start}')
+    print(f'[{len(result[args.variable06])}]: {profiler.duration:.2f} {(time.perf_counter() - start):.2f}')

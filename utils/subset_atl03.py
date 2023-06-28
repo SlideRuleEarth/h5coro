@@ -150,12 +150,12 @@ def sliderule_request(region, parquet_file=None, open_on_complete=False, geo_fie
 
 # Build Profilers
 profiles = {
-#    "s3fs":         Profiler(S3fsReader,        args.granule03),
+    "s3fs":         Profiler(S3fsReader,        args.granule03),
 #    "ros3":         Profiler(Ros3Reader,        args.granule03),
-#    "sliderule-h5p":Profiler(SlideruleReader,   args.granule03),
+    "sliderule-h5p":Profiler(SlideruleReader,   args.granule03),
     "h5coro":       Profiler(H5CoroReader,      args.granule03),
-#    "h5py-local":   Profiler(H5pyReader,        args.granule03),
-#    "h5coro-local": Profiler(LocalH5CoroReader, args.granule03)
+    "h5py-local":   Profiler(H5pyReader,        args.granule03),
+    "h5coro-local": Profiler(LocalH5CoroReader, args.granule03)
 }
 
 # Profile Readers
@@ -165,7 +165,7 @@ for profile in profiles:
     sys.stdout.flush()
     start = time.perf_counter()
     result = subsetted_read(profiler, region, variable=args.variable03)
-    print(f'[{len(result[args.variable03])}]: {profiler.duration} {time.perf_counter() - start}')
+    print(f'[{len(result[args.variable03])}]: {profiler.duration:.2f} {(time.perf_counter() - start):.2f}')
 
 # Display H5Coro Performance Statistics
 h5obj = profiles["h5coro"].read([])

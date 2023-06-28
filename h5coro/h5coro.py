@@ -308,17 +308,6 @@ class H5Dataset:
         # calculate size of buffer
         buffer_size = row_size * self.datasetNumRows
 
-        # allocate and initialize buffer
-        if not self.metaOnly and (buffer_size > 0):
-            # allocate buffer if chunked layout
-            if self.layout == self.CHUNKED_LAYOUT:
-                buffer = numpy.empty(buffer_size, dtype=numpy.byte)
-                # fill buffer with fill value (if provided)
-                if self.fillsize > 0:
-                    fill_value = numpy.frombuffer(numpy.array([self.fillvalue]).tobytes()[:self.fillsize], dtype=numpy.byte)
-                    for i in range(0, buffer_size, self.fillsize):
-                        buffer[i:i+self.fillsize] = fill_value
-
         # calculate buffer start */
         buffer_offset = row_size * self.datasetStartRow
 
@@ -342,6 +331,15 @@ class H5Dataset:
                         raise FatalError(f'chunk element size does not match data element size: {self.elementSize} !=  {self.typeSize}')
                     elif self.chunkElements <= 0:
                         raise FatalError(f'invalid number of chunk elements: {self.chunkElements}')
+
+                # allocate and initialize buffer
+                buffer = bytearray(buffer_size)
+
+                # fill buffer with fill value (if provided)
+                if self.fillsize > 0:
+                    fill_values = struct.pack('Q', self.fillvalue)[:self.fillsize]
+                    for i in range(0, buffer_size, self.fillsize):
+                        buffer[i:i+self.fillsize] = fill_values
 
                 # calculate data chunk buffer size
                 self.dataChunkBufferSize = self.chunkElements * self.typeSize
@@ -439,7 +437,7 @@ class H5Dataset:
                                 self.datasetNumRows,
                                 numcols,
                                 datatype,
-                                numpy.frombuffer(buffer.tobytes(), dtype=datatype, count=elements))
+                                numpy.frombuffer(buffer, dtype=datatype, count=elements))
         except Exception as e:
             raise FatalError(f'unable to populate results for {self.resourceObject.resource}/{self.dataset}: {e}')
 
@@ -1873,7 +1871,7 @@ class H5Dataset:
                     if self.filter[self.DEFLATE_FILTER]:
 
                         # read data into chunk filter buffer (holds the compressed data)
-                        self.dataChunkFilterBuffer = numpy.frombuffer(self.resourceObject.ioRequest(child_addr, curr_node['chunk_size']), dtype=numpy.byte)
+                        self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
 
                         # inflate directly into data buffer
                         if (chunk_bytes == self.dataChunkBufferSize) and (not self.filter[self.SHUFFLE_FILTER]):
@@ -1902,7 +1900,7 @@ class H5Dataset:
                     # read data into data buffer
                     else:
                         chunk_offset_addr = child_addr + chunk_index
-                        buffer[buffer_index:buffer_index+chunk_bytes] = numpy.frombuffer(self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes), dtype=numpy.byte)
+                        buffer[buffer_index:buffer_index+chunk_bytes] = self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes)
 
             # goto next key
             curr_node = next_node
@@ -1938,7 +1936,7 @@ class H5Dataset:
     # inflateChunk
     #######################
     def inflateChunk(self, input):
-        return numpy.frombuffer(zlib.decompress(input), dtype=numpy.byte)
+        return zlib.decompress(input)
 
     #######################
     # shuffleChunk
@@ -1946,7 +1944,7 @@ class H5Dataset:
     def shuffleChunk(self, input, output_offset, output_size, type_size):
         if errorCheckingOption and (type_size < 0 or type_size > 8):
             raise FatalError(f'invalid data size to perform shuffle on: {type_size}')
-        output = numpy.empty(output_size, dtype=numpy.byte)
+        output = bytearray(output_size)
         dst_index = 0
         shuffle_block_size = int(len(input) / type_size)
         num_elements = int(output_size / type_size)
