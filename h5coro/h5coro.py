@@ -2008,9 +2008,7 @@ class H5Coro:
         self.resource = resource
         self.driver = driver_class(resource, credentials)
 
-        self.lock = threading.Lock()
         self.cache = {}
-
         self.metaDataTable = {}
         self.metaDataHits = 0
 
@@ -2117,25 +2115,24 @@ class H5Coro:
         data = None
         # Check if Caching
         if size <= self.CACHE_LINE_SIZE:
+            # Populate Cache (if not there already)
             cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
-            with self.lock:
-                # Populate Cache (if not there already)
-                if cache_line not in self.cache:
-                    self.cache[cache_line] = self.driver.read(cache_line, self.CACHE_LINE_SIZE)
-                # Calculate Start and Stop Indexes into Cache Line
-                start_index = (pos + self.baseAddress) - cache_line
-                stop_index = start_index + size
-                # Pull Data out of Cache
-                if stop_index <= self.CACHE_LINE_SIZE:
-                    data = self.cache[cache_line][start_index:stop_index]
-                else:
-                    # Populate Next Cache Line
-                    next_cache_line = (cache_line + stop_index) & self.CACHE_LINE_MASK
-                    if next_cache_line not in self.cache:
-                        self.cache[next_cache_line] = self.driver.read(next_cache_line, self.CACHE_LINE_SIZE)
-                    next_stop_index = stop_index - self.CACHE_LINE_SIZE
-                    # Concatenate Data from Two Cache Lines
-                    data = self.cache[cache_line][start_index:] + self.cache[next_cache_line][:next_stop_index]
+            if cache_line not in self.cache:
+                self.cache[cache_line] = self.driver.read(cache_line, self.CACHE_LINE_SIZE)
+            # Calculate Start and Stop Indexes into Cache Line
+            start_index = (pos + self.baseAddress) - cache_line
+            stop_index = start_index + size
+            # Pull Data out of Cache
+            if stop_index <= self.CACHE_LINE_SIZE:
+                data = self.cache[cache_line][start_index:stop_index]
+            else:
+                # Populate Next Cache Line
+                next_cache_line = (cache_line + stop_index) & self.CACHE_LINE_MASK
+                if next_cache_line not in self.cache:
+                    self.cache[next_cache_line] = self.driver.read(next_cache_line, self.CACHE_LINE_SIZE)
+                next_stop_index = stop_index - self.CACHE_LINE_SIZE
+                # Concatenate Data from Two Cache Lines
+                data = self.cache[cache_line][start_index:] + self.cache[next_cache_line][:next_stop_index]
         else:
             # Direct Read
             data = self.driver.read(pos + self.baseAddress, size)
