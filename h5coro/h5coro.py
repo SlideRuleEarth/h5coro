@@ -70,17 +70,20 @@ enableAttributesOption = False
 logLevelOption = None
 logFormatOption = '%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s'
 cacheLineSizeOption = 0x400000
+enablePrefetchOption = False
 def config( errorChecking=errorCheckingOption,
             verbose=verboseOption,
             enableAttributes=enableAttributesOption,
             logLevel=logLevelOption,
             logFormat=logFormatOption,
-            cacheLineSize=cacheLineSizeOption ):
-    global errorCheckingOption, verboseOption, enableAttributesOption, cacheLineSizeOption
+            cacheLineSize=cacheLineSizeOption,
+            enablePrefetch=enablePrefetchOption ):
+    global errorCheckingOption, verboseOption, enableAttributesOption, cacheLineSizeOption, enablePrefetchOption
     errorCheckingOption = errorChecking
     verboseOption = verbose
     enableAttributesOption = enableAttributes
     cacheLineSizeOption = cacheLineSize
+    enablePrefetchOption = enablePrefetch
     if logLevel != None:
         logging.basicConfig(stream=sys.stdout, level=logLevel, format=logFormat)
 
@@ -323,7 +326,7 @@ class H5Dataset:
         if not self.metaOnly and (buffer_size > 0):
             if (self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT):
                 data_addr = self.address + buffer_offset
-                buffer = self.resourceObject.ioRequest(data_addr, buffer_size)
+                buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
             elif self.layout == self.CHUNKED_LAYOUT:
                 # chunk layout specific error checks
                 if errorCheckingOption:
@@ -343,6 +346,13 @@ class H5Dataset:
 
                 # calculate data chunk buffer size
                 self.dataChunkBufferSize = self.chunkElements * self.typeSize
+
+                # perform prefetch
+                if enablePrefetchOption:
+                    if buffer_offset < buffer_size:
+                        self.resourceObject.ioRequest(self.address, buffer_offset + buffer_size, caching=False, prefetch=True)
+                    else:
+                        self.resourceObject.ioRequest(self.address + buffer_offset, buffer_size, caching=False, prefetch=True)
 
                 # read b-tree
                 self.pos = self.address
@@ -976,7 +986,7 @@ class H5Dataset:
         if errorCheckingOption and (link_name_len_of_len > 8):
             raise FatalError(f'invalid link name length of length: {link_name_len_of_len}')
         link_name_len = self.readField(link_name_len_of_len)
-        link_name = self.readArray(link_name_len).decode('utf-8')
+        link_name = self.readArray(link_name_len).tobytes().decode('utf-8')
 
         # display
         if verboseOption:
@@ -1010,7 +1020,7 @@ class H5Dataset:
 
         elif link_type == SOFT_LINK:
             soft_link_len = self.readField(2)
-            soft_link = self.readArray(soft_link_len).decode('utf-8')
+            soft_link = self.readArray(soft_link_len).tobytes().decode('utf-8')
             if verboseOption:
                 logger.info(f'Soft Link:            {soft_link}')
             if errorCheckingOption and follow_link:
@@ -1018,7 +1028,7 @@ class H5Dataset:
 
         elif link_type == EXTERNAL_LINK:
             ext_link_len = self.readField(2)
-            ext_link = self.readArray(ext_link_len).decode('utf-8')
+            ext_link = self.readArray(ext_link_len).tobytes().decode('utf-8')
             if verboseOption:
                 logger.info(f'External Link:        {ext_link}')
             if errorCheckingOption and follow_link:
@@ -1133,7 +1143,7 @@ class H5Dataset:
             # read name
             filter_name = ""
             if name_len > 0:
-                filter_name = self.readArray(name_len).decode('utf-8')
+                filter_name = self.readArray(name_len).tobytes().decode('utf-8')
                 name_padding = (8 - (name_len % 8)) % 8
                 self.pos += name_padding
 
@@ -1181,7 +1191,7 @@ class H5Dataset:
             raise FatalError(f'invalid attribute version: {version}')
 
         # read attribute name
-        attr_name = self.readArray(name_size).decode('utf-8')
+        attr_name = self.readArray(name_size).tobytes().decode('utf-8')
         self.pos += (8 - (name_size % 8)) % 8; # align to next 8-byte boundary
 
         # display
@@ -1455,7 +1465,7 @@ class H5Dataset:
             self.pos = link_name_addr
             link_name_chars = []
             while True:
-                c = self.readArray(1).decode('utf-8')
+                c = self.readArray(1).tobytes().decode('utf-8')
                 if c == '\0':
                     break
                 link_name_chars.append(c)
@@ -2109,33 +2119,45 @@ class H5Coro:
     #######################
     # ioRequest
     #######################
-    def ioRequest(self, pos, size):
-        data = None
+    def ioRequest(self, pos, size, caching=True, prefetch=False):
         # Check if Caching
-        if size <= self.CACHE_LINE_SIZE:
-            # Populate Cache (if not there already)
-            cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
-            if cache_line not in self.cache:
-                self.cache[cache_line] = self.driver.read(cache_line, self.CACHE_LINE_SIZE)
-            # Calculate Start and Stop Indexes into Cache Line
-            start_index = (pos + self.baseAddress) - cache_line
-            stop_index = start_index + size
-            # Pull Data out of Cache
-            if stop_index <= self.CACHE_LINE_SIZE:
-                data = self.cache[cache_line][start_index:stop_index]
+        if caching:
+            data_blocks = []
+            data_to_read = size
+            while data_to_read > 0:
+                # Calculate Cache Line
+                cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
+                # Populate Cache (if not there already)
+                if cache_line not in self.cache:
+                    self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.CACHE_LINE_SIZE))
+                # Update Indexes
+                start_index = (pos + self.baseAddress) - cache_line
+                stop_index = min(start_index + size, self.CACHE_LINE_SIZE)
+                data_read = stop_index - start_index
+                data_to_read -= data_read
+                pos += data_read
+                # Grab slice of memory from cache
+                data_blocks += self.cache[cache_line][start_index:stop_index],
+
+            if len(data_blocks) == 1:
+                return data_blocks[0]
             else:
-                # Populate Next Cache Line
-                next_cache_line = (cache_line + stop_index) & self.CACHE_LINE_MASK
-                if next_cache_line not in self.cache:
-                    self.cache[next_cache_line] = self.driver.read(next_cache_line, self.CACHE_LINE_SIZE)
-                next_stop_index = stop_index - self.CACHE_LINE_SIZE
-                # Concatenate Data from Two Cache Lines
-                data = self.cache[cache_line][start_index:] + self.cache[next_cache_line][:next_stop_index]
+                return b''.join(data_blocks)
+        # Prefetch
+        elif prefetch:
+            block_size = size + ((self.CACHE_LINE_SIZE - (size % self.CACHE_LINE_SIZE)) % self.CACHE_LINE_SIZE) # align to cache line boundary
+            cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
+            data_block = memoryview(self.driver.read(cache_line, block_size))
+            data_index = 0
+            while data_index < block_size:
+                # Cache the Line
+                self.cache[cache_line] = data_block[data_index:data_index+self.CACHE_LINE_SIZE]
+                cache_line += self.CACHE_LINE_SIZE
+                data_index += self.CACHE_LINE_SIZE
+            return None
+        # Direct Read
         else:
-            # Direct Read
-            data = self.driver.read(pos + self.baseAddress, size)
-        # Return Data
-        return data
+            return self.driver.read(pos + self.baseAddress, size)
 
     #######################
     # readSuperblock
