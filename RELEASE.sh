@@ -23,4 +23,4 @@ git commit -m "Version $VERSION"
 #
 git tag -a $VERSION -m "version $VERSION"
 git push --tags && git push
-gh release create $(VERSION) -t $(VERSION)
+gh release create $VERSION -t $VERSION
