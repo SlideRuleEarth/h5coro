@@ -15,9 +15,6 @@ with open('version.txt') as fh:
     if version[0] == 'v':
         version = version[1:]
 
-# list of all utility scripts to be included with package
-scripts=[]
-
 setup(
     name='h5coro',
     author='SlideRule Developers',
@@ -36,5 +33,4 @@ setup(
     packages=find_packages(),
     version=version,
     install_requires=install_requires,
-    scripts=scripts,
 )
