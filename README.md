@@ -1,2 +1,181 @@
 # h5coro
-HDF5 Cloud Optimized Read Only Python Package
+
+**A cloud optimized Python package for reading HDF5 data stored in S3**
+
+## Origin and Purpose
+
+**h5coro** is a pure Python implementation of a subset of the HDF5 specification that has been optimized for reading data out of S3.  The project has its roots in the development of an on-demand science data processing system called [SlideRule](https://github.com/ICESat2-SlideRule/sliderule), where a new C++ implementation of the HDF5 specification was developed for performant read access to Earth science datasets stored in AWS S3.  Over time, user's of SlideRule began requesting the ability to read HDF5 and NetCDF files out of S3 from their own Python scripts with the same performance as SlideRule.  The result is **h5coro**: the re-implementation in Python of the core HDF5 reading logic that exists in SlideRule.  Since then, **h5coro** has become its own project, which will continue to grow and diverge in functionality from its parent implementation in SlideRule.  For more information on SlideRule and the organization behind **h5coro**, see https://slideruleearth.io. 
+
+**h5coro** is optimized for reading HDF5 data in high-latency high-throughput environments.  It accomplishes this through a few key design decisions:
+* __All reads are concurrent.__  Each dataset and/or attribute read by **h5coro** is performed in its own thread.
+* __Intelligent range gets__ are used to read as many dataset chunks as possible in each read operation.  This drastically reduces the number of HTTP requests to S3 and means there is no longer a need to re-chunk the data (it actually works better on smaller chunk sizes due to the granularity of the request).
+* __Block caching__ is used to minimize the number of GET requests made to S3.  S3 has a large first-byte latency (we've measured it at ~60ms on our systems), which means there is a large penalty for each read operation performed.  **h5coro** performs all reads to S3 as large block reads and then maintains data in a local cache for access to smaller amounts of data within those blocks. 
+* __The system is serverless__ and does not depend on any external services to read the data. This means it scales naturally as the user application scales, and it reduces overall system complexity.
+* __No metadata repository is needed.__  Instead of caching the contents of the datasets which are large and may or may not be read again, the library focuses on caching the structure of the file so that successive reads to other datasets in the same file will not have to re-read and re-build the directory structure of the file.
+
+## Limitations
+
+For a full list of which parts of the HDF5 specification **h5coro** implements, see the [compatibility](#compatibility) section at the end of this readme.  The major limitations currently present in the package are:
+* The code is not optimized for local file access.  If you are reading data that is local, you will get much better performance from `h5py`.
+* It is a read-only library and has no functionality to write HDF5 data.
+* It targets one dimensional datasets and is not optimized for high dimensionality data.  In practice this means that if you subset a dataset that is two or more dimensions, only the first dimension will be subsetted with all of the other dimensions collapsed into one serial array of elements.
+* Strides and hyperslabs are not supported 
+
+## Installation
+
+The simplest way to install **h5coro** is by using the [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/index.html) package manager.
+```bash    
+    conda install -c conda-forge h5coro
+```
+Alternatively, you can also install h5coro using [pip](https://pip.pypa.io/en/stable/).
+```bash
+    pip install icepyx
+```
+
+## Example Usage
+
+```python
+# (1) import
+from h5coro import h5coro, s3driver, filedriver
+
+# (2) configure
+h5coro.config(errorChecking=True, verbose=False, enableAttributes=False)
+
+# (3) create
+h5obj = h5coro.H5Coro(f'{my_bucket}/{path_to_hdf5_file}', s3driver.S3Driver)
+
+# (4) read
+datasets = [{'dataset': '/path/to/dataset1', 'startrow': 0, 'numrows': h5coro.ALL_ROWS},
+            {'dataset': '/path/to/dataset2', 'startrow': 324, 'numrows': 50}]
+h5obj.readDatasets(datasets=datasets, block=True)
+
+# (5) display
+for dataset in h5obj:
+    print(dataset)
+```
+
+#### (1) Importing h5coro
+h5coro
+: the main module implementing the HDF5 reader object
+s3driver
+: the driver used to read HDF5 data from S3
+filediver
+: the driver used to read HDF5 data from a local file
+
+#### (2) Configuring h5coro
+The `h5coro.config` function is used to configure different aspects of the package that are then globally set for all future use of the package. 
+errorChecking
+: bool, enables error checks while reading through an HDF5 file; recommended for the first time a dataset is attempting to be read, but comes at a slight performance penalty
+verbose
+: bool, enables system logs that report diagnostic messages; note that all errors raise the `FatalError` exception and don't require the **verbose** option
+enableAttributes
+: bool, enables reading attributes in the HDF5 as if they were a dataset; comes with a performance penalty
+
+#### (3) Create h5coro Object
+The call to `h5coro.H5Coro` creates a reader object that opens up the HDF5 file, reads the start of the file, and is then ready to accept read requests. The calling application must have credentials to access the object in the specified S3 bucket.  **h5coro** uses `boto3`, so any credentials supplied via the standard AWS methods will work.  If credentials need to be supplied externally, then in the call to `h5coro.H5Coro` pass in an argument `credentials` as a dictionary with the following three fields: "aws_access_key_id", "aws_secret_access_key", "aws_session_token".
+
+#### (4) Read with h5coro Object
+The `H5Coro.read` function takes a list of dictionary objects that describe the datasets that need to be read in parallel.  If the `block` parameter is set to True, then the code will wait for all of the datasets to be read before returning; otherwise, the code will return immediately and not until the dataset within the reader object is access will the code block.
+
+#### (5) Display the Datasets
+The `H5Coro` class implements iteration over each dataset read.  The contents of each dataset are supplied as `numpy` arrays.
+
+## Licensing
+
+**h5coro** is licensed under the 3-clause BSD license found in the LICENSE file at the root of this source tree.
+
+## Contribute
+
+We welcome and invite contributions from anyone at any career stage and with any amount of coding experience towards the development of **h5coro**. We appreciate any and all contributions made towards the development of the project. You will be recognized for your work by being listed as one of the project contributors.
+
+#### Ways to Contribute
+* Fixing typographical or coding errors
+* Submitting bug reports or feature requests through the use of GitHub issues
+* Improving documentation and testing
+* Sharing use cases and examples (such as Jupyter Notebooks)
+* Providing code for everyone to use
+
+#### Requesting a Feature
+Check the project issues tab to see if the feature has already been suggested. If not, please submit a new issue describing your requested feature or enhancement. Please give your feature request both a clear title and description. Please let us know in your description if this is something you would like to contribute to the project.
+
+#### Reporting a Bug
+Check the project issues tab to see if the problem has already been reported. If not, please submit a new issue so that we are made aware of the problem. Please provide as much detail as possible when writing the description of your bug report. Providing detailed information and examples will help us resolve issues faster.
+
+#### Contributing Code or Examples
+We follow a standard Forking Workflow for code changes and additions. Submitted code goes through a review and comment process by the project maintainers.
+
+#### General Guidelines
+* Make each pull request as small and simple as possible
+* Commit messages should be clear and describe the changes
+* Larger changes should be broken down into their basic components and integrated separately
+* Bug fixes should be their own pull requests with an associated GitHub issue
+* Write a descriptive pull request message with a clear title
+* Please be patient as reviews of pull requests can take time
+
+#### Steps to Contribute
+* Fork the repository to your personal GitHub account by clicking the “Fork” button on the project main page. This creates your own server-side copy of the repository.
+* Either by cloning to your local system or working in GitHub Codespaces, create a work environment to make your changes.
+* Add the original project repository as the upstream remote. While this step isn’t a necessary, it allows you to keep your fork up to date in the future.
+* Create a new branch to do your work.
+* Make your changes on the new branch.
+* Push your work to GitHub under your fork of the project.
+* Submit a Pull Request from your forked branch to the project repository.
+
+## Compatibility
+
+| Format Element | Supported | Contains | Missing |
+|:--------------:|:---------:|:--------:|:-------:|
+| ___Field Sizes___ | <span style="color:green">Yes</span> | 1, 2, 4, 8, bytes | |
+| ___Superblock___   | <span style="color:blue">Partial</span> | Version 0, 2 | Version 1, 3 |
+| ___Base Address___   | <span style="color:green">Yes</span> | | |
+| ___B-Tree___  | <span style="color:blue">Partial</span> | Version 1 | Version 2 |
+| ___Group Symbol Table___  | <span style="color:green">Yes</span> | Version 1 | |
+| ___Local Heap___  | <span style="color:green">Yes</span> | Version 0 |
+| ___Global Heap___  | <span style="color:red">No</span> | | Version 1 |
+| ___Fractal Heap___ | <span style="color:green">Yes</span> | Version 0 | |
+| ___Shared Object Header Message Table___ | <span style="color:red">No | | Version 0 |
+| ___Data Object Headers___  | <span style="color:green">Yes</span> | Version 1, 2 | |
+| ___Shared Message___  | <span style="color:red">No</span> | | Version 1 |
+| ___NIL Message___  | <span style="color:green">Yes</span> | Unversioned | |
+| ___Dataspace Message___  | <span style="color:green">Yes</span> | Version 1 | |
+| ___Link Info Message___  | <span style="color:green">Yes</span> | Version 0 | |
+| ___Datatype Message___  | <span style="color:blue">Partial</span> | Version 1 | Version 0, 2, 3 |
+| ___Fill Value (Old) Message___  | <span style="color:red">No</span> | | Unversioned |
+| ___Fill Value Message___  | <span style="color:blue">Partial</span> | Version 2, 3 | Version 1 |
+| ___Link Message___  | <span style="color:green">Yes</span> | Version 1 |
+| ___External Data Files Message___  | <span style="color:red">No</span> | | Version 1 |
+| ___Data Layout Message___  | <span style="color:blue">Partial</span> | Version 3 | Version 1, 2 |
+| ___Bogus Message___  | <span style="color:red">No</span> | | Unversioned |
+| ___Group Info Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Filter Pipeline Message___  | <span style="color:green">Yes</span> | Version 1, 2 | |
+| ___Attribute Message___  | <span style="color:blue">Partial</span> | Version 1 | Version 2, 3 |
+| ___Object Comment Message___  | <span style="color:red">No</span> | | Unversioned |
+| ___Object Modification Time (Old) Message___  | <span style="color:red">No</span> | | Unversioned |
+| ___Shared Message Table Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Object Header Continuation Message___  | <span style="color:green">Yes</span> | Version 1, 2 | |
+| ___Symbol Table Message___  | <span style="color:green">Yes</span> | Unversioned | |
+| ___Object Modification Time Message___  | <span style="color:red">No</span> | | Version 1 |
+| ___B-Tree ‘K’ Value Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Driver Info Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Attribute Info Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Object Reference Count Message___  | <span style="color:red">No</span> | | Version 0 |
+| ___Compact Storage___  | <span style="color:green">Yes</span> | | |
+| ___Continuous Storage___  | <span style="color:green">Yes</span> | | |
+| ___Chunked Storage___  | <span style="color:green">Yes</span> | | |
+| ___Fixed Point Type___  | <span style="color:green">Yes</span> | | |
+| ___Floating Point Type___  | <span style="color:green">Yes</span> | | |
+| ___Time Type___  | <span style="color:red">No</span> | | |
+| ___String Type___  | <span style="color:green">Yes</span> | | |
+| ___Bit Field Type___  | <span style="color:red">No</span> | | |
+| ___Opaque Type___  | <span style="color:red">No</span> | | |
+| ___Compound Type___  | <span style="color:red">No</span> | | |
+| ___Reference Type___  | <span style="color:red">No</span> | | |
+| ___Enumerated Type___  | <span style="color:red">No</span> | | |
+| ___Variable Length Type___  | <span style="color:red">No</span> | | |
+| ___Array Type___  | <span style="color:red">No</span> | | |
+| ___Deflate Filter___  | <span style="color:green">Yes</span> | | |
+| ___Shuffle Filter___  | <span style="color:green">Yes</span> | | |
+| ___Fletcher32 Filter___  | <span style="color:red">No</span> | | |
+| ___Szip Filter___  | <span style="color:red">No</span> | | |
+| ___Nbit Filter___  | <span style="color:red">No</span> | | |
+| ___Scale Offset Filter___  | <span style="color:red">No</span> | | |
