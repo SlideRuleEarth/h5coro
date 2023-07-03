@@ -4,22 +4,22 @@
 
 ## Origin and Purpose
 
-**h5coro** is a pure Python implementation of a subset of the HDF5 specification that has been optimized for reading data out of S3.  The project has its roots in the development of an on-demand science data processing system called [SlideRule](https://github.com/ICESat2-SlideRule/sliderule), where a new C++ implementation of the HDF5 specification was developed for performant read access to Earth science datasets stored in AWS S3.  Over time, user's of SlideRule began requesting the ability to read HDF5 and NetCDF files out of S3 from their own Python scripts with the same performance as SlideRule.  The result is **h5coro**: the re-implementation in Python of the core HDF5 reading logic that exists in SlideRule.  Since then, **h5coro** has become its own project, which will continue to grow and diverge in functionality from its parent implementation in SlideRule.  For more information on SlideRule and the organization behind **h5coro**, see https://slideruleearth.io. 
+**h5coro** is a pure Python implementation of a subset of the HDF5 specification that has been optimized for reading data out of S3.  The project has its roots in the development of an on-demand science data processing system called [SlideRule](https://github.com/ICESat2-SlideRule/sliderule), where a new C++ implementation of the HDF5 specification was developed for performant read access to Earth science datasets stored in AWS S3.  Over time, user's of SlideRule began requesting the ability to performantly read HDF5 and NetCDF files out of S3 from their own Python scripts.  The result is **h5coro**: the re-implementation in Python of the core HDF5 reading logic that exists in SlideRule.  Since then, **h5coro** has become its own project, which will continue to grow and diverge in functionality from its parent implementation.  For more information on SlideRule and the organization behind **h5coro**, see https://slideruleearth.io. 
 
 **h5coro** is optimized for reading HDF5 data in high-latency high-throughput environments.  It accomplishes this through a few key design decisions:
 * __All reads are concurrent.__  Each dataset and/or attribute read by **h5coro** is performed in its own thread.
 * __Intelligent range gets__ are used to read as many dataset chunks as possible in each read operation.  This drastically reduces the number of HTTP requests to S3 and means there is no longer a need to re-chunk the data (it actually works better on smaller chunk sizes due to the granularity of the request).
 * __Block caching__ is used to minimize the number of GET requests made to S3.  S3 has a large first-byte latency (we've measured it at ~60ms on our systems), which means there is a large penalty for each read operation performed.  **h5coro** performs all reads to S3 as large block reads and then maintains data in a local cache for access to smaller amounts of data within those blocks. 
 * __The system is serverless__ and does not depend on any external services to read the data. This means it scales naturally as the user application scales, and it reduces overall system complexity.
-* __No metadata repository is needed.__  Instead of caching the contents of the datasets which are large and may or may not be read again, the library focuses on caching the structure of the file so that successive reads to other datasets in the same file will not have to re-read and re-build the directory structure of the file.
+* __No metadata repository is needed.__  The structure of the file are cached as they are read so that successive reads to other datasets in the same file will not have to re-read and re-build the directory structure of the file.
 
 ## Limitations
 
 For a full list of which parts of the HDF5 specification **h5coro** implements, see the [compatibility](#compatibility) section at the end of this readme.  The major limitations currently present in the package are:
+* The code only implements a subset of the HDF5 specification.  **h5coro** has been shown to work on a number of different datasets, but depending on the version of the HDF5 C library used to write the file, and what options were used during its creation, it is very possible that some part of **h5coro** will need to be updated to support reading it.  Hopefully, over time as more of the spec is implemented, this will become less of a problem.
 * The code is not optimized for local file access.  If you are reading data that is local, you will get much better performance from `h5py`.
 * It is a read-only library and has no functionality to write HDF5 data.
-* It targets one dimensional datasets and is not optimized for high dimensionality data.  In practice this means that if you subset a dataset that is two or more dimensions, only the first dimension will be subsetted with all of the other dimensions collapsed into one serial array of elements.
-* Strides and hyperslabs are not supported 
+* It targets one dimensional datasets and is not optimized for high dimensionality data.  In practice this means that if you subset a dataset that is two or more dimensions, only the first dimension will be subsetted with all of the other dimensions collapsed into one serial array of elements.  This limitation will be addressed in future releases.
 
 ## Installation
 
@@ -29,7 +29,7 @@ The simplest way to install **h5coro** is by using the [conda](https://docs.cond
 ```
 Alternatively, you can also install h5coro using [pip](https://pip.pypa.io/en/stable/).
 ```bash
-    pip install icepyx
+    pip install h5coro
 ```
 
 ## Example Usage
@@ -55,27 +55,31 @@ for dataset in h5obj:
 ```
 
 #### (1) Importing h5coro
-h5coro
-: the main module implementing the HDF5 reader object
-s3driver
-: the driver used to read HDF5 data from S3
-filediver
-: the driver used to read HDF5 data from a local file
+
+`h5coro`: the main module implementing the HDF5 reader object
+
+`s3driver`: the driver used to read HDF5 data from S3
+
+`filediver`: the driver used to read HDF5 data from a local file
 
 #### (2) Configuring h5coro
 The `h5coro.config` function is used to configure different aspects of the package that are then globally set for all future use of the package. 
-errorChecking
-: bool, enables error checks while reading through an HDF5 file; recommended for the first time a dataset is attempting to be read, but comes at a slight performance penalty
-verbose
-: bool, enables system logs that report diagnostic messages; note that all errors raise the `FatalError` exception and don't require the **verbose** option
-enableAttributes
-: bool, enables reading attributes in the HDF5 as if they were a dataset; comes with a performance penalty
+
+`errorChecking`: bool, enables error checks while reading through an HDF5 file; recommended for the first time a dataset is attempting to be read, but comes at a slight performance penalty
+
+`verbose`: bool, enables system logs that report diagnostic messages; note that all errors raise the `FatalError` exception and don't require the **verbose** option
+
+`enableAttributes`: bool, enables reading attributes in the HDF5 as if they were a dataset; comes with a performance penalty
 
 #### (3) Create h5coro Object
-The call to `h5coro.H5Coro` creates a reader object that opens up the HDF5 file, reads the start of the file, and is then ready to accept read requests. The calling application must have credentials to access the object in the specified S3 bucket.  **h5coro** uses `boto3`, so any credentials supplied via the standard AWS methods will work.  If credentials need to be supplied externally, then in the call to `h5coro.H5Coro` pass in an argument `credentials` as a dictionary with the following three fields: "aws_access_key_id", "aws_secret_access_key", "aws_session_token".
+The call to `h5coro.H5Coro` creates a reader object that opens up the HDF5 file, reads the start of the file, and is then ready to accept read requests. 
+
+The calling application must have credentials to access the object in the specified S3 bucket.  **h5coro** uses `boto3`, so any credentials supplied via the standard AWS methods will work.  If credentials need to be supplied externally, then in the call to `h5coro.H5Coro` pass in an argument `credentials` as a dictionary with the following three fields: "aws_access_key_id", "aws_secret_access_key", "aws_session_token".
 
 #### (4) Read with h5coro Object
-The `H5Coro.read` function takes a list of dictionary objects that describe the datasets that need to be read in parallel.  If the `block` parameter is set to True, then the code will wait for all of the datasets to be read before returning; otherwise, the code will return immediately and not until the dataset within the reader object is access will the code block.
+The `H5Coro.read` function takes a list of dictionary objects that describe the datasets that need to be read in parallel.  
+
+If the `block` parameter is set to True, then the code will wait for all of the datasets to be read before returning; otherwise, the code will return immediately and not until the dataset within the reader object is access will the code block.
 
 #### (5) Display the Datasets
 The `H5Coro` class implements iteration over each dataset read.  The contents of each dataset are supplied as `numpy` arrays.
