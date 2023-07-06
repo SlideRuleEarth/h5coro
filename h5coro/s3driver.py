@@ -29,9 +29,11 @@ class S3Driver:
         self.resourcePath = list(filter(('').__ne__, resource.split('/')))
 
         # apply credentials is supplied
-        if  "aws_access_key_id" in credentials and \
-            "aws_secret_access_key" in credentials and \
-            "aws_session_token" in credentials:
+        if "profile" in credentials:
+            self.session = boto3.Session(profile_name=credentials["profile"])
+        elif "aws_access_key_id" in credentials and \
+             "aws_secret_access_key" in credentials and \
+             "aws_session_token" in credentials:
             self.session = boto3.Session(aws_access_key_id=credentials["aws_access_key_id"],
                                          aws_secret_access_key=credentials["aws_secret_access_key"],
                                          aws_session_token=credentials["aws_session_token"])
