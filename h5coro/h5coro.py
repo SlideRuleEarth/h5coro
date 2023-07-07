@@ -2037,7 +2037,7 @@ class H5Coro:
     #######################
     # readDatasets
     #######################
-    def readDatasets(self, datasets, block):
+    def readDatasets(self, datasets, block=True):
 
         # check if datasets supplied
         if len(datasets) <= 0:
