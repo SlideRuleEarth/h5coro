@@ -232,9 +232,9 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS):
+    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, metaOnly=False):
         self.resourceObject         = resourceObject
-        self.metaOnly               = False
+        self.metaOnly               = metaOnly
         self.pos                    = self.resourceObject.rootAddress
         self.dataset                = dataset
         self.datasetStartRow        = startRow
@@ -482,6 +482,10 @@ class H5Dataset:
         SIZE_OF_CHUNK_0_MASK    = 0x3
         starting_position       = self.pos
 
+        # display
+        if verboseOption:
+            logger.info(f'<<Object Information V0 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+
         # check signature and version
         if errorCheckingOption:
             signature = self.readField(4)
@@ -501,7 +505,6 @@ class H5Dataset:
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
                 birth_time = self.readField(4)
-                logger.info(f'<<Object Information V0 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
                 logger.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
                 logger.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
                 logger.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
@@ -553,13 +556,13 @@ class H5Dataset:
                 raise FatalError(f'header v0 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if self.datasetFound:
+            if not self.metaOnly and self.datasetFound:
                 self.pos = end_of_hdr # go directory to end of header
                 break # exit loop because dataset is found
 
         # check bytes read
-        if errorCheckingOption and (self.pos != end_of_hdr):
-            raise FatalError(f'did not read correct number of v0 bytes: 0x{self.pos:x} != 0x{end_of_hdr:x}')
+        if errorCheckingOption and (self.pos < end_of_hdr):
+            raise FatalError(f'did not read enough v0 bytes: 0x{self.pos:x} < 0x{end_of_hdr:x}')
 
         # return bytes read
         return self.pos - starting_position
@@ -624,7 +627,7 @@ class H5Dataset:
                 raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if self.datasetFound:
+            if not self.metaOnly and self.datasetFound:
                 self.pos = end_of_hdr # go directory to end of header
                 break # exit loop because dataset is found
 
@@ -633,8 +636,8 @@ class H5Dataset:
             self.pos = end_of_hdr
 
         # check bytes read
-        if errorCheckingOption and (self.pos != end_of_hdr):
-            raise FatalError(f'did not read correct number of v1 bytes: 0x{self.pos:x} != 0x{end_of_hdr:x}')
+        if errorCheckingOption and (self.pos < end_of_hdr):
+            raise FatalError(f'did not read enough v1 bytes: 0x{self.pos:x} < 0x{end_of_hdr:x}')
 
         # return bytes read
         return self.pos - starting_position
@@ -997,7 +1000,7 @@ class H5Dataset:
 
         # check if follow link
         follow_link = False
-        if link_name == self.datasetPath[dlvl]:
+        if dlvl < len(self.datasetPath) and link_name == self.datasetPath[dlvl]:
             follow_link = True
 
         # process link
@@ -1351,11 +1354,11 @@ class H5Dataset:
                 self.readSymbolTable(head_data_addr, dlvl)
                 self.pos = current_node_pos
                 self.pos += self.resourceObject.lengthSize # skip next key
-                if self.datasetFound:
+                if not self.metaOnly and self.datasetFound:
                     break
 
             # exit loop or go to next node
-            if (right_sibling == INVALID_VALUE[self.resourceObject.offsetSize]) or self.datasetFound:
+            if (right_sibling == INVALID_VALUE[self.resourceObject.offsetSize]) or (not self.metaOnly and self.datasetFound):
                 break
             else:
                 self.pos = right_sibling
@@ -1483,7 +1486,7 @@ class H5Dataset:
 
             # process link
             return_position = self.pos
-            if link_name == self.datasetPath[dlvl]:
+            if dlvl < len(self.datasetPath) and link_name == self.datasetPath[dlvl]:
                 if cache_type == 2:
                     raise FatalError(f'symbolic links are unsupported: {link_name}')
                 self.readObjHdr(obj_hdr_addr, dlvl + 1)
@@ -1671,7 +1674,7 @@ class H5Dataset:
                 raise FatalError(f'reading message exceeded end of direct block: {starting_position}')
 
             # check if dataset found
-            if self.datasetFound:
+            if not self.metaOnly and self.datasetFound:
                 break
 
         # skip to end of block (useful only if exited loop above early)
@@ -2063,6 +2066,33 @@ class H5Coro:
             resultThread(self)
         else:
             threading.Thread(target=resultThread, args=(self,), daemon=True).start()
+
+    #######################
+    # listDirectory
+    #######################
+    def listDirectory(self, directory):
+        try:
+            dataset_worker = H5Dataset(self, directory, metaOnly=True)
+            dataset_worker.readDataset()
+        except FatalError as e:
+            logger.debug(f'H5Coro exited listing the directory {directory}: {e}')
+        if len(directory) > 0 and directory[0] == '/':
+            directory = directory[1:]
+        if len(directory) > 0 and directory[-1] == '/':
+            directory = directory[:-1]
+        elements = {}
+        for entry in self.metaDataTable:
+            if entry.startswith(directory):
+                if len(directory) > 0:
+                    element = entry.split(directory)[1]
+                else:
+                    element = entry
+                if len(element) > 0 and element[0] == '/':
+                    element = element[1:]
+                if len(element) > 0:
+                    element = element.split('/')[0]
+                    elements[element] = True
+        return list(elements.keys())
 
     #######################
     # operator: []
