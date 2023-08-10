@@ -2162,7 +2162,7 @@ class H5Coro:
                     self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.CACHE_LINE_SIZE))
                 # Update Indexes
                 start_index = (pos + self.baseAddress) - cache_line
-                stop_index = min(start_index + size, self.CACHE_LINE_SIZE)
+                stop_index = min(start_index + data_to_read, self.CACHE_LINE_SIZE)
                 data_read = stop_index - start_index
                 data_to_read -= data_read
                 pos += data_read
