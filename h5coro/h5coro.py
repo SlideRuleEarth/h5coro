@@ -2052,9 +2052,9 @@ class H5Coro:
                 dataset_table[dataset["dataset"]] = dataset
 
         # start threads working on each dataset
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table)) as executor:
-            dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"]) for dataset in dataset_table.values()]
-            self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table))
+        dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"]) for dataset in dataset_table.values()]
+        self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
 
         # initialize results and conditionals for each dataset being read
         for dataset in dataset_table.keys():
