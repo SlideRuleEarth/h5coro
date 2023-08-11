@@ -40,6 +40,12 @@ import numpy
 # CONSTANTS
 ###############################################################################
 
+ENABLE_ATTRIBUTES_DEFAULT = False
+
+CACHE_LINE_SIZE_DEFAULT = 0x400000
+
+ENABLE_PREFETCH_DEFAULT = False
+
 SIZE_2_FORMAT = {
     1: 'B',
     2: 'H',
@@ -66,24 +72,15 @@ logger = logging.getLogger(__name__)
 
 errorCheckingOption = True
 verboseOption = False
-enableAttributesOption = False
 logLevelOption = None
 logFormatOption = '%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s'
-cacheLineSizeOption = 0x400000
-enablePrefetchOption = False
 def config( errorChecking=errorCheckingOption,
             verbose=verboseOption,
-            enableAttributes=enableAttributesOption,
             logLevel=logLevelOption,
-            logFormat=logFormatOption,
-            cacheLineSize=cacheLineSizeOption,
-            enablePrefetch=enablePrefetchOption ):
-    global errorCheckingOption, verboseOption, enableAttributesOption, cacheLineSizeOption, enablePrefetchOption
+            logFormat=logFormatOption ):
+    global errorCheckingOption, verboseOption
     errorCheckingOption = errorChecking
     verboseOption = verbose
-    enableAttributesOption = enableAttributes
-    cacheLineSizeOption = cacheLineSize
-    enablePrefetchOption = enablePrefetch
     if logLevel != None:
         logging.basicConfig(stream=sys.stdout, level=logLevel, format=logFormat)
 
@@ -232,9 +229,10 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, metaOnly=False):
+    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, metaOnly=False, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
         self.resourceObject         = resourceObject
         self.metaOnly               = metaOnly
+        self.enableAttributes       = enableAttributes
         self.pos                    = self.resourceObject.rootAddress
         self.dataset                = dataset
         self.datasetStartRow        = startRow
@@ -348,7 +346,7 @@ class H5Dataset:
                 self.dataChunkBufferSize = self.chunkElements * self.typeSize
 
                 # perform prefetch
-                if enablePrefetchOption:
+                if self.resourceObject.enablePrefetch:
                     if buffer_offset < buffer_size:
                         self.resourceObject.ioRequest(self.address, buffer_offset + buffer_size, caching=False, prefetch=True)
                     else:
@@ -658,8 +656,8 @@ class H5Dataset:
             self.HEADER_CONT_MSG:       self.headercontMsgHandler,
             self.SYMBOL_TABLE_MSG:      self.symboltableMsgHandler,
         }
-        # attrubite handlers
-        if enableAttributesOption:
+        # attribute handlers
+        if self.enableAttributes:
             msg_handler_table[self.ATTRIBUTE_MSG] = self.attributeMsgHandler
             msg_handler_table[self.ATTRIBUTE_INFO_MSG] = self.attributeinfoMsgHandler
         # process message
@@ -2008,16 +2006,27 @@ class H5Coro:
     #######################
     # Constants
     #######################
-    CACHE_LINE_SIZE         = cacheLineSizeOption
-    CACHE_LINE_MASK         = (0xFFFFFFFFFFFFFFFF - (CACHE_LINE_SIZE-1))
     H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
 
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, driver_class, credentials={}, datasets=[], block=True):
+    def __init__(self, 
+        resource, 
+        driver_class, 
+        credentials={}, 
+        datasets=[], 
+        block=True,
+        enableAttributes = ENABLE_ATTRIBUTES_DEFAULT,
+        cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
+        enablePrefetch = ENABLE_PREFETCH_DEFAULT
+    ):
         self.resource = resource
         self.driver = driver_class(resource, credentials)
+        
+        self.cacheLineSize = cacheLineSize
+        self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
+        self.enablePrefetch = enablePrefetch
 
         self.cache = {}
         self.metaDataTable = {}
@@ -2032,12 +2041,12 @@ class H5Coro:
         self.results = {}
         self.conditions = {}
 
-        self.readDatasets(datasets, block)
+        self.readDatasets(datasets, block=block, enableAttributes=enableAttributes)
 
     #######################
     # readDatasets
     #######################
-    def readDatasets(self, datasets, block=True):
+    def readDatasets(self, datasets, block=True, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
 
         # check if datasets supplied
         if len(datasets) <= 0:
@@ -2053,7 +2062,7 @@ class H5Coro:
 
         # start threads working on each dataset
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table))
-        dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"]) for dataset in dataset_table.values()]
+        dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"], enableAttributes=enableAttributes) for dataset in dataset_table.values()]
         self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
 
         # initialize results and conditionals for each dataset being read
@@ -2068,9 +2077,21 @@ class H5Coro:
             threading.Thread(target=resultThread, args=(self,), daemon=True).start()
 
     #######################
-    # listDirectory
+    # getAttributes
     #######################
-    def listDirectory(self, directory):
+    def getAttributes(self, group_or_variable):
+        return(dict_of_attributes)
+
+    #######################
+    # inspectVariable
+    #######################
+    def inspectVariable(self, variable):
+        return(dims, size, dtype, getAttributes(variable))
+
+    #######################
+    # listGroup
+    #######################
+    def listGroup(self, group):
         try:
             dataset_worker = H5Dataset(self, directory, metaOnly=True)
             dataset_worker.readDataset()
@@ -2156,13 +2177,13 @@ class H5Coro:
             data_to_read = size
             while data_to_read > 0:
                 # Calculate Cache Line
-                cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
+                cache_line = (pos + self.baseAddress) & self.cacheLineMask
                 # Populate Cache (if not there already)
                 if cache_line not in self.cache:
-                    self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.CACHE_LINE_SIZE))
+                    self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
                 # Update Indexes
                 start_index = (pos + self.baseAddress) - cache_line
-                stop_index = min(start_index + data_to_read, self.CACHE_LINE_SIZE)
+                stop_index = min(start_index + data_to_read, self.cacheLineSize)
                 data_read = stop_index - start_index
                 data_to_read -= data_read
                 pos += data_read
@@ -2175,15 +2196,15 @@ class H5Coro:
                 return b''.join(data_blocks)
         # Prefetch
         elif prefetch:
-            block_size = size + ((self.CACHE_LINE_SIZE - (size % self.CACHE_LINE_SIZE)) % self.CACHE_LINE_SIZE) # align to cache line boundary
-            cache_line = (pos + self.baseAddress) & self.CACHE_LINE_MASK
+            block_size = size + ((self.cacheLineSize - (size % self.cacheLineSize)) % self.cacheLineSize) # align to cache line boundary
+            cache_line = (pos + self.baseAddress) & self.cacheLineMask
             data_block = memoryview(self.driver.read(cache_line, block_size))
             data_index = 0
             while data_index < block_size:
                 # Cache the Line
-                self.cache[cache_line] = data_block[data_index:data_index+self.CACHE_LINE_SIZE]
-                cache_line += self.CACHE_LINE_SIZE
-                data_index += self.CACHE_LINE_SIZE
+                self.cache[cache_line] = data_block[data_index:data_index+self.cacheLineSize]
+                cache_line += self.cacheLineSize
+                data_index += self.cacheLineSize
             return None
         # Direct Read
         else:
