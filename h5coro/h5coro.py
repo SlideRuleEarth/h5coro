@@ -139,6 +139,50 @@ class H5Values:
         return list(self.values)
 
 ###############################################################################
+# H5Metadata Class
+###############################################################################
+
+class H5Metadata:
+
+    #######################
+    # Constants
+    #######################
+    # filters
+    DEFLATE_FILTER          = 1
+    SHUFFLE_FILTER          = 2
+    FLETCHER32_FILTER       = 3
+    SZIP_FILTER             = 4
+    NBIT_FILTER             = 5
+    SCALEOFFSET_FILTER      = 6
+
+    #######################
+    # Constructor
+    #######################
+    def __init__(self, address=0):
+        self.ndims              = None
+        self.dimensions         = []
+        self.typeSize           = 0
+        self.type               = None
+        self.signedval          = True
+        self.fillsize           = 0
+        self.fillvalue          = None
+        self.layout             = None
+        self.size               = 0
+        self.address            = address
+        self.chunkElements      = 0
+        self.chunkDimensions    = []
+        self.elementSize        = 0
+        self.isattribute        = False
+        self.filter             = {
+            self.DEFLATE_FILTER:        False,
+            self.SHUFFLE_FILTER:        False,
+            self.FLETCHER32_FILTER:     False,
+            self.SZIP_FILTER:           False,
+            self.NBIT_FILTER:           False,
+            self.SCALEOFFSET_FILTER:    False
+        }
+
+###############################################################################
 # H5Dataset Class
 ###############################################################################
 
@@ -190,13 +234,6 @@ class H5Dataset:
     HEADER_CONT_MSG         = 0x10
     SYMBOL_TABLE_MSG        = 0x11
     ATTRIBUTE_INFO_MSG      = 0x15
-    # filters
-    DEFLATE_FILTER          = 1
-    SHUFFLE_FILTER          = 2
-    FLETCHER32_FILTER       = 3
-    SZIP_FILTER             = 4
-    NBIT_FILTER             = 5
-    SCALEOFFSET_FILTER      = 6
     # data type conversion
     TO_DATATYPE = {
         FIXED_POINT_TYPE: {
@@ -240,28 +277,8 @@ class H5Dataset:
         self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
         self.datasetPathLevels      = len(self.datasetPath)
         self.datasetFound           = False
-        self.ndims                  = None
-        self.dimensions             = []
-        self.typeSize               = 0
-        self.type                   = None
-        self.signedval              = True
-        self.fillsize               = 0
-        self.fillvalue              = None
-        self.layout                 = None
-        self.size                   = 0
-        self.address                = 0
-        self.chunkElements          = 0
-        self.chunkDimensions        = []
-        self.elementSize            = 0
-        self.dataChunkBufferSize    = []
-        self.filter                 = {
-            self.DEFLATE_FILTER:        False,
-            self.SHUFFLE_FILTER:        False,
-            self.FLETCHER32_FILTER:     False,
-            self.SZIP_FILTER:           False,
-            self.NBIT_FILTER:           False,
-            self.SCALEOFFSET_FILTER:    False
-        }
+        self.dataChunkBufferSize    = 0
+        self.meta                   = H5Metadata()
 
     #######################
     # readField
@@ -283,25 +300,32 @@ class H5Dataset:
     # readDataset
     #######################
     def readDataset(self):
-        # traverse file for dataset
-        dataset_level = 0
-        self.readObjHdr(dataset_level)
+
+        # get metadata for dataset
+        if self.dataset in self.resourceObject.metadataTable:
+            self.meta = self.resourceObject.metadataTable[self.dataset]
+        else:            
+            # traverse file for dataset
+            dataset_level = 0
+            self.readObjHdr(dataset_level)
+            # update metadata table
+            self.resourceObject.metadataTable[self.dataset] = self.meta
 
         # sanity check data attrbutes
-        if self.typeSize <= 0:
+        if self.meta.typeSize <= 0:
             raise FatalError(f'missing data type information')
-        elif self.ndims == None:
+        elif self.meta.ndims == None:
             raise FatalError(f'missing data dimension information')
-        elif self.address == INVALID_VALUE[self.resourceObject.offsetSize]:
+        elif self.meta.address == INVALID_VALUE[self.resourceObject.offsetSize]:
             raise FatalError(f'invalid data address')
 
         # calculate size of data row (note dimension starts at 1)
-        row_size = self.typeSize
-        for d in range(1, self.ndims):
-            row_size *= self.dimensions[d]
+        row_size = self.meta.typeSize
+        for d in range(1, self.meta.ndims):
+            row_size *= self.meta.dimensions[d]
 
         # get number of rows
-        first_dimension = (self.ndims > 0) and self.dimensions[0] or 1
+        first_dimension = (self.meta.ndims > 0) and self.meta.dimensions[0] or 1
         self.datasetNumRows = (self.datasetNumRows == self.ALL_ROWS) and first_dimension or self.datasetNumRows
         if (self.datasetStartRow + self.datasetNumRows) > first_dimension:
             raise FatalError(f'read exceeds number of rows: {self.datasetStartRow} + {self.datasetNumRows} > {first_dimension}')
@@ -314,52 +338,52 @@ class H5Dataset:
 
         # check if data address and data size is valid
         if errorCheckingOption:
-            if (self.size != 0) and (self.size < (buffer_offset + buffer_size)):
-                raise FatalError(f'read exceeds available data: {self.size} < {buffer_offset} + {buffer_size}')
-            if (self.filter[self.DEFLATE_FILTER] or self.filter[self.SHUFFLE_FILTER]) and \
-               ((self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT)):
+            if (self.meta.size != 0) and (self.meta.size < (buffer_offset + buffer_size)):
+                raise FatalError(f'read exceeds available data: {self.meta.size} < {buffer_offset} + {buffer_size}')
+            if (self.meta.filter[self.meta.DEFLATE_FILTER] or self.meta.filter[self.meta.SHUFFLE_FILTER]) and \
+               ((self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT)):
                 raise FatalError(f'filters unsupported on non-chunked layouts')
 
         # read dataset
         if not self.metaOnly and (buffer_size > 0):
-            if (self.layout == self.COMPACT_LAYOUT) or (self.layout == self.CONTIGUOUS_LAYOUT):
-                data_addr = self.address + buffer_offset
+            if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
+                data_addr = self.meta.address + buffer_offset
                 buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
-            elif self.layout == self.CHUNKED_LAYOUT:
+            elif self.meta.layout == self.CHUNKED_LAYOUT:
                 # chunk layout specific error checks
                 if errorCheckingOption:
-                    if self.elementSize != self.typeSize:
-                        raise FatalError(f'chunk element size does not match data element size: {self.elementSize} !=  {self.typeSize}')
-                    elif self.chunkElements <= 0:
-                        raise FatalError(f'invalid number of chunk elements: {self.chunkElements}')
+                    if self.meta.elementSize != self.meta.typeSize:
+                        raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
+                    elif self.meta.chunkElements <= 0:
+                        raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
 
                 # allocate and initialize buffer
                 buffer = bytearray(buffer_size)
 
                 # fill buffer with fill value (if provided)
-                if self.fillsize > 0:
-                    fill_values = struct.pack('Q', self.fillvalue)[:self.fillsize]
-                    for i in range(0, buffer_size, self.fillsize):
-                        buffer[i:i+self.fillsize] = fill_values
+                if self.meta.fillsize > 0:
+                    fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
+                    for i in range(0, buffer_size, self.meta.fillsize):
+                        buffer[i:i+self.meta.fillsize] = fill_values
 
                 # calculate data chunk buffer size
-                self.dataChunkBufferSize = self.chunkElements * self.typeSize
+                self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
 
                 # perform prefetch
                 if self.resourceObject.enablePrefetch:
                     if buffer_offset < buffer_size:
-                        self.resourceObject.ioRequest(self.address, buffer_offset + buffer_size, caching=False, prefetch=True)
+                        self.resourceObject.ioRequest(self.meta.address, buffer_offset + buffer_size, caching=False, prefetch=True)
                     else:
-                        self.resourceObject.ioRequest(self.address + buffer_offset, buffer_size, caching=False, prefetch=True)
+                        self.resourceObject.ioRequest(self.meta.address + buffer_offset, buffer_size, caching=False, prefetch=True)
 
                 # read b-tree
-                self.pos = self.address
+                self.pos = self.meta.address
                 self.readBTreeV1(buffer, buffer_offset, dataset_level)
 
                 # check need to flatten chunks
                 flatten = False
-                for d in range(1, self.ndims):
-                    if self.chunkDimensions[d] != self.dimensions[d]:
+                for d in range(1, self.meta.ndims):
+                    if self.meta.chunkDimensions[d] != self.meta.dimensions[d]:
                         flatten = True
                         break
 
@@ -371,23 +395,23 @@ class H5Dataset:
 
                     # build number of each chunk per dimension
                     cdimnum = [0 for _ in range(self.MAX_NDIMS * 2)]
-                    for i in range(self.ndims):
-                        cdimnum[i] = self.dimensions[i] / self.chunkDimensions[i]
-                        cdimnum[i + self.ndims] = self.chunkDimensions[i]
+                    for i in range(self.meta.ndims):
+                        cdimnum[i] = self.meta.dimensions[i] / self.meta.chunkDimensions[i]
+                        cdimnum[i + self.meta.ndims] = self.meta.chunkDimensions[i]
 
                     # build size of each chunk per flattened dimension
                     cdimsizes = [0 for _ in range(self.FLAT_NDIMS)]
-                    cdimsizes[0] = self.chunkDimensions[0] * self.typeSize  # number of chunk rows
-                    for i in range(1, self.ndims):
+                    cdimsizes[0] = self.meta.chunkDimensions[0] * self.meta.typeSize  # number of chunk rows
+                    for i in range(1, self.meta.ndims):
                         cdimsizes[0] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[0] *= self.chunkDimensions[i]             # number of columns in chunks
-                    cdimsizes[1] = self.typeSize
-                    for i in range(1, self.ndims):
-                        cdimsizes[1] *= self.chunkDimensions[i]             # number of columns in chunks
-                    cdimsizes[2] = self.typeSize
-                    for i in range(1, self.ndims):
+                        cdimsizes[0] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                    cdimsizes[1] = self.meta.typeSize
+                    for i in range(1, self.meta.ndims):
+                        cdimsizes[1] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                    cdimsizes[2] = self.meta.typeSize
+                    for i in range(1, self.meta.ndims):
                         cdimsizes[2] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[2] *= self.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[2] *= self.meta.chunkDimensions[i]             # number of columns in chunks
 
                     # initialize loop variables
                     ci = self.FLAT_NDIMS - 1;                               # chunk dimension index
@@ -425,19 +449,19 @@ class H5Dataset:
                     buffer = fbuf
 
             elif errorCheckingOption:
-                raise FatalError(f'invalid data layout: {self.layout}')
+                raise FatalError(f'invalid data layout: {self.meta.layout}')
 
         try:
             # set results
             numcols = 0
-            if self.ndims == 0:
+            if self.meta.ndims == 0:
                 numcols = 0
-            elif self.ndims == 1:
+            elif self.meta.ndims == 1:
                 numcols = 1
-            elif self.ndims >= 2:
-                numcols = self.dimensions[1]
-            elements = int(buffer_size / self.typeSize)
-            datatype = self.TO_DATATYPE[self.type][self.signedval][self.typeSize]
+            elif self.meta.ndims >= 2:
+                numcols = self.meta.dimensions[1]
+            elements = int(buffer_size / self.meta.typeSize)
+            datatype = self.TO_DATATYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
 
             # fulfill h5 future
             h5values = H5Values(elements,
@@ -459,8 +483,8 @@ class H5Dataset:
         # check mata data table
         for lvl in range(self.datasetPathLevels, dlvl, -1):
             group_path = '/'.join(self.datasetPath[:lvl])
-            if group_path in self.resourceObject.metaDataTable:
-                self.pos = self.resourceObject.metaDataTable[group_path]
+            if group_path in self.resourceObject.metadataTable:
+                self.pos = self.resourceObject.metadataTable[group_path].address
                 self.resourceObject.metaDataHits += 1
                 dlvl = lvl
         # process header
@@ -555,7 +579,7 @@ class H5Dataset:
 
             # check if dataset found
             if not self.metaOnly and self.datasetFound:
-                self.pos = end_of_hdr # go directory to end of header
+                self.pos = end_of_hdr # go directly to end of header
                 break # exit loop because dataset is found
 
         # check bytes read
@@ -626,7 +650,7 @@ class H5Dataset:
 
             # check if dataset found
             if not self.metaOnly and self.datasetFound:
-                self.pos = end_of_hdr # go directory to end of header
+                self.pos = end_of_hdr # go directly to end of header
                 break # exit loop because dataset is found
 
         # move past gap
@@ -697,11 +721,11 @@ class H5Dataset:
                 raise FatalError(f'unsupported number of dimensions: {dimensionality}')
 
         # read and populate data dimensions
-        self.ndims = min(dimensionality, self.MAX_NDIMS)
-        if self.ndims > 0:
-            for x in range(self.ndims):
+        self.meta.ndims = min(dimensionality, self.MAX_NDIMS)
+        if self.meta.ndims > 0:
+            for x in range(self.meta.ndims):
                 dimension = self.readField(self.resourceObject.lengthSize)
-                self.dimensions.append(dimension)
+                self.meta.dimensions.append(dimension)
                 if verboseOption:
                     logger.info(f'Dimension {x}:          {dimension}')
 
@@ -768,26 +792,26 @@ class H5Dataset:
     def datatypeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position           = self.pos
         version_class               = self.readField(4)
-        self.typeSize               = self.readField(4)
+        self.meta.typeSize               = self.readField(4)
         version                     = (version_class & 0xF0) >> 4
         databits                    = version_class >> 8
-        self.type                   = version_class & 0x0F
-        self.signedval              = ((databits & 0x08) >> 3) == 1
+        self.meta.type                   = version_class & 0x0F
+        self.meta.signedval              = ((databits & 0x08) >> 3) == 1
 
         # display
         if verboseOption:
             logger.info(f'<<Data Type Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
-            logger.info(f'Type Size:            {self.typeSize}')
-            logger.info(f'Data Type:            {self.type}')
-            logger.info(f'Signed:               {self.signedval}')
+            logger.info(f'Type Size:            {self.meta.typeSize}')
+            logger.info(f'Data Type:            {self.meta.type}')
+            logger.info(f'Signed:               {self.meta.signedval}')
 
         # check version
         if errorCheckingOption and version != 1:
             raise FatalError(f'unsupported datatype version: {version}')
 
         # Fixed Point
-        if self.type == self.FIXED_POINT_TYPE:
+        if self.meta.type == self.FIXED_POINT_TYPE:
             if verboseOption:
                 byte_order      = databits & 0x1
                 pad_type        = (databits & 0x06) >> 1
@@ -800,8 +824,8 @@ class H5Dataset:
             else:
                 self.pos += 4
         # Floating Point
-        elif self.type == self.FLOATING_POINT_TYPE:
-            self.signedval = True
+        elif self.meta.type == self.FLOATING_POINT_TYPE:
+            self.meta.signedval = True
             if verboseOption:
                 byte_order      = ((databits & 0x40) >> 5) | (databits & 0x1)
                 pad_type        = (databits & 0x0E) >> 1
@@ -828,7 +852,7 @@ class H5Dataset:
             else:
                 self.pos += 12
         # Variable Length
-        elif self.type == self.VARIABLE_LENGTH_TYPE:
+        elif self.meta.type == self.VARIABLE_LENGTH_TYPE:
             if verboseOption:
                 vt_type = databits & 0xF # variable length type
                 padding = (databits & 0xF0) >> 4
@@ -862,9 +886,9 @@ class H5Dataset:
             raise FatalError(f'variable length data types require reading a global heap, which is not yet supported')
             # self.pos += self.datatypeMsgHandler(msg_size, obj_hdr_flags)
         # String
-        elif self.type == self.STRING_TYPE:
-            self.typeSize = 1
-            self.signedval = True
+        elif self.meta.type == self.STRING_TYPE:
+            self.meta.typeSize = 1
+            self.meta.signedval = True
             if verboseOption:
                 padding = databits & 0x0F
                 charset = (databits & 0xF0) >> 4
@@ -887,7 +911,7 @@ class H5Dataset:
                 logger.info(f'Character Set:        {charset_str}')
         # Default
         elif errorCheckingOption:
-            raise FatalError(f'unsupported datatype: {self.type}')
+            raise FatalError(f'unsupported datatype: {self.meta.type}')
 
         # return bytes read
         return self.pos - starting_position
@@ -921,9 +945,9 @@ class H5Dataset:
 
             fill_value_defined = self.readField(1)
             if fill_value_defined:
-                self.fillsize = self.readField(4)
-                if self.fillsize > 0:
-                    self.fillvalue = self.readField(self.fillsize)
+                self.meta.fillsize = self.readField(4)
+                if self.meta.fillsize > 0:
+                    self.meta.fillvalue = self.readField(self.meta.fillsize)
         # version 3
         else:
             flags = self.readField(1)
@@ -931,13 +955,13 @@ class H5Dataset:
                 logger.info(f'Fill Flags:           {flags}')
 
             if flags & FILL_VALUE_DEFINED:
-                self.fillsize = self.readField(4)
-                self.fillvalue = self.readField(self.fillsize)
+                self.meta.fillsize = self.readField(4)
+                self.meta.fillvalue = self.readField(self.meta.fillsize)
 
         # display
         if verboseOption:
-            logger.info(f'Fill Value Size:      {self.fillsize}')
-            logger.info(f'Fill Value:           {self.fillvalue}')
+            logger.info(f'Fill Value Size:      {self.meta.fillsize}')
+            logger.info(f'Fill Value:           {self.meta.fillvalue}')
 
         # return bytes read
         return self.pos - starting_position
@@ -1008,7 +1032,7 @@ class H5Dataset:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             # update meta data table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metaDataTable[group_path] = obj_hdr_addr
+            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
             # follow link
             if follow_link:
                 return_position = self.pos
@@ -1047,56 +1071,56 @@ class H5Dataset:
     def datalayoutMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         version             = self.readField(1)
-        self.layout         = self.readField(1)
+        self.meta.layout         = self.readField(1)
 
         # display
         if verboseOption:
             logger.info(f'<<Data Layout Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
-            logger.info(f'Layout:               {self.layout}')
+            logger.info(f'Layout:               {self.meta.layout}')
 
         # check version
         if errorCheckingOption and version != 3:
             raise FatalError(f'invalid data layout version: {version}')
 
         # read layouts
-        if self.layout == self.COMPACT_LAYOUT:
-            self.size = self.readField(2)
-            self.address = self.pos
-            self.pos += self.size
-        elif self.layout == self.CONTIGUOUS_LAYOUT:
-            self.address = self.readField(self.resourceObject.offsetSize)
-            self.size = self.readField(self.resourceObject.lengthSize)
-        elif self.layout == self.CHUNKED_LAYOUT:
+        if self.meta.layout == self.COMPACT_LAYOUT:
+            self.meta.size = self.readField(2)
+            self.meta.address = self.pos
+            self.pos += self.meta.size
+        elif self.meta.layout == self.CONTIGUOUS_LAYOUT:
+            self.meta.address = self.readField(self.resourceObject.offsetSize)
+            self.meta.size = self.readField(self.resourceObject.lengthSize)
+        elif self.meta.layout == self.CHUNKED_LAYOUT:
             # read number of dimensions
             chunk_num_dim = self.readField(1) - 1  # dimensionality is plus one over actual number of dimensions
             chunk_num_dim = min(chunk_num_dim, self.MAX_NDIMS)
-            if errorCheckingOption and (self.ndims != None) and (chunk_num_dim != self.ndims):
-                raise FatalError(f'number of chunk dimensions does not match dimensionality of data: {chunk_num_dim} != {self.ndims}')
+            if errorCheckingOption and (self.meta.ndims != None) and (chunk_num_dim != self.meta.ndims):
+                raise FatalError(f'number of chunk dimensions does not match dimensionality of data: {chunk_num_dim} != {self.meta.ndims}')
             # read address of B-tree
-            self.address = self.readField(self.resourceObject.offsetSize)
+            self.meta.address = self.readField(self.resourceObject.offsetSize)
             # read chunk dimensions
             if chunk_num_dim > 0:
-                self.chunkElements = 1
+                self.meta.chunkElements = 1
                 for _ in range(chunk_num_dim):
                     chunk_dimension = self.readField(4)
-                    self.chunkDimensions.append(chunk_dimension)
-                    self.chunkElements *= chunk_dimension
+                    self.meta.chunkDimensions.append(chunk_dimension)
+                    self.meta.chunkElements *= chunk_dimension
             # read element size
-            self.elementSize = self.readField(4)
+            self.meta.elementSize = self.readField(4)
             # display
             if verboseOption:
-                logger.info(f'Element Size:         {self.elementSize}')
+                logger.info(f'Element Size:         {self.meta.elementSize}')
                 logger.info(f'# Chunked Dimensions: {chunk_num_dim}')
                 for d in range(chunk_num_dim):
-                    logger.info(f'Chunk Dimension {d}:    {self.chunkDimensions[d]}')
+                    logger.info(f'Chunk Dimension {d}:    {self.meta.chunkDimensions[d]}')
         elif errorCheckingOption:
-            raise FatalError(f'unsupported data layout: {self.layout}')
+            raise FatalError(f'unsupported data layout: {self.meta.layout}')
 
         # display
         if verboseOption:
-            logger.info(f'Dataset Size:         {self.size}')
-            logger.info(f'Dataset Address:      {self.address}')
+            logger.info(f'Dataset Size:         {self.meta.size}')
+            logger.info(f'Dataset Address:      {self.meta.address}')
 
         # return bytes read
         return self.pos - starting_position
@@ -1126,7 +1150,7 @@ class H5Dataset:
         # read filters
         for f in range(num_filters):
             # read filter id
-            filter = self.readField(2)
+            filter_id = self.readField(2)
 
             # read filter name length
             name_len = 0
@@ -1150,16 +1174,16 @@ class H5Dataset:
 
             # display
             if verboseOption:
-                logger.info(f'Filter ID:            {filter}')
+                logger.info(f'Filter ID:            {filter_id}')
                 logger.info(f'Flags:                {flags}')
                 logger.info(f'# Parameters:         {num_parms}')
                 logger.info(f'Filter Name:          {filter_name}')
 
             # set filter
             try:
-                self.filter[filter] = True
+                self.meta.filter[filter_id] = True
             except Exception:
-                raise FatalError(f'unsupported filter specified: {filter}')
+                raise FatalError(f'unsupported filter specified: {filter_id}')
 
             # read client data
             self.pos += num_parms * 4
@@ -1192,8 +1216,9 @@ class H5Dataset:
             raise FatalError(f'invalid attribute version: {version}')
 
         # read attribute name
-        attr_name = self.readArray(name_size).tobytes().decode('utf-8')
+        attr_name = self.readArray(name_size).tobytes().decode('utf-8')[:-1]
         self.pos += (8 - (name_size % 8)) % 8; # align to next 8-byte boundary
+        attr_path = '/'.join(self.datasetPath[:dlvl] + [attr_name])
 
         # display
         if verboseOption:
@@ -1206,34 +1231,42 @@ class H5Dataset:
         if( ((dlvl + 1) == len(self.datasetPath)) and
             (attr_name == self.datasetPath[dlvl]) ):
             self.datasetFound = True
+            self.meta.isattribute = True
 
             # read datatype message
             datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            if errorCheckingOption and (datatype_bytes_read > datatype_size):
-                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} > {datatype_size}')
+            datatype_bytes_read += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            if errorCheckingOption and (datatype_bytes_read != datatype_size):
+                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} != {datatype_size}')
             self.pos += datatype_bytes_read
-            self.pos += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
 
             # read dataspace message
             dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            if errorCheckingOption and (dataspace_bytes_read > dataspace_size):
-                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} > {dataspace_size}')
+            dataspace_bytes_read += (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            if errorCheckingOption and (dataspace_bytes_read != dataspace_size):
+                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} != {dataspace_size}')
             self.pos += dataspace_bytes_read
-            self.pos += (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
 
             # set meta data
-            self.layout = self.CONTIGUOUS_LAYOUT
-            for f in filter.keys():
-                filter[f] = False
-            self.address = self.pos
-            self.size = msg_size - (self.pos - starting_position)
+            self.meta.layout = self.CONTIGUOUS_LAYOUT
+            for f in self.meta.filter.keys():
+                self.meta.filter[f] = False
+            self.meta.address = self.pos
+            self.meta.size = msg_size - (self.pos - starting_position)
 
             # move to end of data
-            self.pos += self.size
+            self.pos += self.meta.size
+
+            # update metadata table
+            self.resourceObject.metadataTable[attr_path] = self.meta
 
             # return bytes read
             return self.pos - starting_position
         else:
+            # update metadata table
+            self.resourceObject.metadataTable[attr_path] = H5Metadata(self.pos + datatype_size + dataspace_size)
+            self.resourceObject.metadataTable[attr_path].isattribute = True
+
             # skip processing message
             self.pos = starting_position + msg_size
             return msg_size
@@ -1480,7 +1513,7 @@ class H5Dataset:
 
             # update meta data table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metaDataTable[group_path] = obj_hdr_addr
+            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
 
             # process link
             return_position = self.pos
@@ -1808,16 +1841,16 @@ class H5Dataset:
         self.pos += self.resourceObject.offsetSize * 2
 
         # read first key
-        curr_node = self.readBTreeNodeV1(self.ndims)
+        curr_node = self.readBTreeNodeV1(self.meta.ndims)
 
         # read children
         for e in range(entries_used):
             child_addr  = self.readField(self.resourceObject.offsetSize)
-            next_node   = self.readBTreeNodeV1(self.ndims)
+            next_node   = self.readBTreeNodeV1(self.meta.ndims)
             child_key1  = curr_node['row_key']
             child_key2  = next_node['row_key'] # there is always +1 keys
-            if (next_node['chunk_size'] == 0) and (self.ndims > 0):
-                child_key2 = self.dimensions[0]
+            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
+                child_key2 = self.meta.dimensions[0]
 
             # display
             if verboseOption:
@@ -1843,12 +1876,12 @@ class H5Dataset:
                 else:
                     # calculate chunk location
                     chunk_offset = 0
-                    for i in range(self.ndims):
-                        slice_size = curr_node['slice'][i] * self.typeSize
+                    for i in range(self.meta.ndims):
+                        slice_size = curr_node['slice'][i] * self.meta.typeSize
                         for k in range(i):
-                            slice_size *= self.chunkDimensions[k]
-                        for j in range(i + 1, self.ndims):
-                            slice_size *= self.dimensions[j]
+                            slice_size *= self.meta.chunkDimensions[k]
+                        for j in range(i + 1, self.meta.ndims):
+                            slice_size *= self.meta.dimensions[j]
                         chunk_offset += slice_size
 
                     # calculate buffer index - offset into data buffer to put chunked data
@@ -1874,18 +1907,18 @@ class H5Dataset:
 
                     # display
                     if verboseOption:
-                        logger.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.typeSize)})')
-                        logger.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.typeSize)})')
-                        logger.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.typeSize)})')
+                        logger.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.meta.typeSize)})')
+                        logger.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.meta.typeSize)})')
+                        logger.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})')
 
                     # read chunk
-                    if self.filter[self.DEFLATE_FILTER]:
+                    if self.meta.filter[self.meta.DEFLATE_FILTER]:
 
                         # read data into chunk filter buffer (holds the compressed data)
                         self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
 
                         # inflate directly into data buffer
-                        if (chunk_bytes == self.dataChunkBufferSize) and (not self.filter[self.SHUFFLE_FILTER]):
+                        if (chunk_bytes == self.dataChunkBufferSize) and (not self.meta.filter[self.meta.SHUFFLE_FILTER]):
                             buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
 
                         # inflate into data chunk buffer */
@@ -1893,15 +1926,15 @@ class H5Dataset:
                             dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer)
 
                             # shuffle data chunk buffer into data buffer
-                            if self.filter[self.SHUFFLE_FILTER]:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(dataChunkBuffer, chunk_index, chunk_bytes, self.typeSize)
+                            if self.meta.filter[self.meta.SHUFFLE_FILTER]:
+                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(dataChunkBuffer, chunk_index, chunk_bytes, self.meta.typeSize)
 
                             # copy data chunk buffer into data buffer
                             else:
                                 buffer[buffer_index:buffer_index+chunk_bytes] = dataChunkBuffer[chunk_index:chunk_index+chunk_bytes]
 
                     # check filter options
-                    elif errorCheckingOption and self.filter[self.SHUFFLE_FILTER]:
+                    elif errorCheckingOption and self.meta.filter[self.meta.SHUFFLE_FILTER]:
                         raise FatalError(f'shuffle filter unsupported on uncompressed chunk')
 
                     # check buffer sizes
@@ -1931,7 +1964,7 @@ class H5Dataset:
 
         # read trailing zero
         trailing_zero = self.readField(8)
-        if errorCheckingOption and (trailing_zero % self.typeSize != 0):
+        if errorCheckingOption and (trailing_zero % self.meta.typeSize != 0):
             raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
 
         # set node key
@@ -2029,7 +2062,7 @@ class H5Coro:
         self.enablePrefetch = enablePrefetch
 
         self.cache = {}
-        self.metaDataTable = {}
+        self.metadataTable = {}
         self.metaDataHits = 0
 
         self.offsetSize = 0
@@ -2093,27 +2126,31 @@ class H5Coro:
     #######################
     def listGroup(self, group):
         try:
-            dataset_worker = H5Dataset(self, directory, metaOnly=True)
+            dataset_worker = H5Dataset(self, group, metaOnly=True, enableAttributes=True)
             dataset_worker.readDataset()
         except FatalError as e:
-            logger.debug(f'H5Coro exited listing the directory {directory}: {e}')
-        if len(directory) > 0 and directory[0] == '/':
-            directory = directory[1:]
-        if len(directory) > 0 and directory[-1] == '/':
-            directory = directory[:-1]
-        elements = {}
-        for entry in self.metaDataTable:
-            if entry.startswith(directory):
-                if len(directory) > 0:
-                    element = entry.split(directory)[1]
+            logger.debug(f'H5Coro exited listing the group {group}: {e}')
+        if len(group) > 0 and group[0] == '/':
+            group = group[1:]
+        if len(group) > 0 and group[-1] == '/':
+            group = group[:-1]
+        variables = set()
+        attributes = set()
+        for entry in self.metadataTable:
+            if entry.startswith(group):
+                if len(group) > 0:
+                    element = entry.split(group)[1]
                 else:
                     element = entry
                 if len(element) > 0 and element[0] == '/':
                     element = element[1:]
                 if len(element) > 0:
                     element = element.split('/')[0]
-                    elements[element] = True
-        return list(elements.keys())
+                    if self.metadataTable[entry].isattribute:
+                        attributes.add(element)
+                    else:
+                        variables.add(element)
+        return variables, attributes
 
     #######################
     # operator: []
