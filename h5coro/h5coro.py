@@ -182,6 +182,12 @@ class H5Metadata:
             self.SCALEOFFSET_FILTER:    False
         }
 
+    #######################
+    # str()
+    #######################
+    def __str__(self):
+        return f'{{\"type\": {self.type}, \"dims\": {self.dimensions}}}'
+
 ###############################################################################
 # H5Dataset Class
 ###############################################################################
@@ -266,8 +272,9 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, metaOnly=False, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
+    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, earlyExit=True, metaOnly=False, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
         self.resourceObject         = resourceObject
+        self.earlyExit              = earlyExit
         self.metaOnly               = metaOnly
         self.enableAttributes       = enableAttributes
         self.pos                    = self.resourceObject.rootAddress
@@ -311,13 +318,17 @@ class H5Dataset:
             # update metadata table
             self.resourceObject.metadataTable[self.dataset] = self.meta
 
+        # exit early if only reading metadata
+        if self.metaOnly:
+            return self.dataset, self.meta
+            
         # sanity check data attrbutes
         if self.meta.typeSize <= 0:
-            raise FatalError(f'missing data type information')
+            raise FatalError(f'missing data type information for {self.dataset}')
         elif self.meta.ndims == None:
-            raise FatalError(f'missing data dimension information')
+            raise FatalError(f'missing data dimension information for {self.dataset}')
         elif self.meta.address == INVALID_VALUE[self.resourceObject.offsetSize]:
-            raise FatalError(f'invalid data address')
+            raise FatalError(f'invalid data address for {self.dataset}')
 
         # calculate size of data row (note dimension starts at 1)
         row_size = self.meta.typeSize
@@ -345,7 +356,7 @@ class H5Dataset:
                 raise FatalError(f'filters unsupported on non-chunked layouts')
 
         # read dataset
-        if not self.metaOnly and (buffer_size > 0):
+        if buffer_size > 0:
             if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
                 data_addr = self.meta.address + buffer_offset
                 buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
@@ -578,7 +589,7 @@ class H5Dataset:
                 raise FatalError(f'header v0 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if not self.metaOnly and self.datasetFound:
+            if self.earlyExit and self.datasetFound:
                 self.pos = end_of_hdr # go directly to end of header
                 break # exit loop because dataset is found
 
@@ -649,7 +660,7 @@ class H5Dataset:
                 raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
-            if not self.metaOnly and self.datasetFound:
+            if self.earlyExit and self.datasetFound:
                 self.pos = end_of_hdr # go directly to end of header
                 break # exit loop because dataset is found
 
@@ -1385,11 +1396,11 @@ class H5Dataset:
                 self.readSymbolTable(head_data_addr, dlvl)
                 self.pos = current_node_pos
                 self.pos += self.resourceObject.lengthSize # skip next key
-                if not self.metaOnly and self.datasetFound:
+                if self.earlyExit and self.datasetFound:
                     break
 
             # exit loop or go to next node
-            if (right_sibling == INVALID_VALUE[self.resourceObject.offsetSize]) or (not self.metaOnly and self.datasetFound):
+            if (right_sibling == INVALID_VALUE[self.resourceObject.offsetSize]) or (self.earlyExit and self.datasetFound):
                 break
             else:
                 self.pos = right_sibling
@@ -1522,7 +1533,7 @@ class H5Dataset:
                     raise FatalError(f'symbolic links are unsupported: {link_name}')
                 self.readObjHdr(obj_hdr_addr, dlvl + 1)
                 self.pos = return_position
-                if not self.metaOnly:
+                if self.earlyExit:
                     break # datasetFound
 
         # return bytes read
@@ -1705,7 +1716,7 @@ class H5Dataset:
                 raise FatalError(f'reading message exceeded end of direct block: {starting_position}')
 
             # check if dataset found
-            if not self.metaOnly and self.datasetFound:
+            if self.earlyExit and self.datasetFound:
                 break
 
         # skip to end of block (useful only if exited loop above early)
@@ -2110,23 +2121,32 @@ class H5Coro:
             threading.Thread(target=resultThread, args=(self,), daemon=True).start()
 
     #######################
-    # getAttributes
+    # readAttribute
     #######################
-    def getAttributes(self, group_or_variable):
-        return(dict_of_attributes)
+    def readAttribute(self, attribute):
+        dataset_worker = H5Dataset(self, attribute, enableAttributes=True)
+        _, values = dataset_worker.readDataset()
+        return values
 
     #######################
     # inspectVariable
     #######################
-    def inspectVariable(self, variable):
-        return(dims, size, dtype, getAttributes(variable))
+    def inspectVariable(self, variable, w_attr=True):
+        dataset_worker = H5Dataset(self, variable, earlyExit=True, metaOnly=True, enableAttributes=w_attr)
+        _, metadata = dataset_worker.readDataset()
+        attr = {}
+        if w_attr:
+            _, attributes = self.listGroup(variable)
+            for attribute in attributes:
+                attr[attribute] = self.readAttribute(attribute)
+        return metadata, attr
 
     #######################
     # listGroup
     #######################
-    def listGroup(self, group):
+    def listGroup(self, group, w_attr=True):
         try:
-            dataset_worker = H5Dataset(self, group, metaOnly=True, enableAttributes=True)
+            dataset_worker = H5Dataset(self, group, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
             dataset_worker.readDataset()
         except FatalError as e:
             logger.debug(f'H5Coro exited listing the group {group}: {e}')
