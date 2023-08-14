@@ -186,9 +186,9 @@ class H5Metadata:
         }
 
     #######################
-    # str()
+    # representation
     #######################
-    def __str__(self):
+    def __repr__(self):
         typestr = f'{self.type} (unsupported)'
         if self.type == H5Dataset.FIXED_POINT_TYPE or self.type == H5Dataset.FLOATING_POINT_TYPE:
             datatype = H5Dataset.TO_NUMPY_TYPE[self.type][self.signedval][self.typeSize]
@@ -196,6 +196,12 @@ class H5Metadata:
         elif self.type == H5Dataset.STRING_TYPE:
             typestr = f'{str}'
         return f'{{\"type\": {typestr}, \"dims\": {self.dimensions}}}'
+
+    #######################
+    # print
+    #######################
+    def __str__(self):
+        return self.__repr__()
 
 ###############################################################################
 # H5Dataset Class
@@ -2050,6 +2056,14 @@ def resultThread(resourceObject):
         resourceObject.conditions[dataset].notify()
         resourceObject.conditions[dataset].release()
 
+def inspectThread(resourceObject, variable, w_attr):
+    try:
+        metadata, attributes = resourceObject.inspectVariable(variable, w_attr=w_attr)
+        return variable, metadata, attributes
+    except FatalError as e:
+        logger.warning(f'H5Coro encountered an error inspecting {variable}: {e}')
+        return variable, {}, {}
+
 ###############################################################################
 # H5Coro Class
 ###############################################################################
@@ -2100,7 +2114,6 @@ class H5Coro:
     # readDatasets
     #######################
     def readDatasets(self, datasets, block=True, earlyExit=EARLY_EXIT_DEFAULT, metaOnly=META_ONLY_DEFAULT, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
-
         # check if datasets supplied
         if len(datasets) <= 0:
             return
@@ -2144,40 +2157,52 @@ class H5Coro:
         # initialize empty results
         metadata = {}
         attributes = {}
+
         # kick off non-blocking read of variable metadata
         self.readDatasets(datasets=[variable], block=False, earlyExit=True, metaOnly=True, enableAttributes=w_attr)
+
         # if attributes request
         if w_attr:
             # list attributes associated with variable
             _, attrs = self.listGroup(variable)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(attrs)) as executor:
-                # read each attribute concurrently
-                dataset_workers = [H5Dataset(self, f'{variable}/{attr}', enableAttributes=True) for attr in attrs]
-                attr_futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
-                for future in concurrent.futures.as_completed(attr_futures):
-                    attr, values = future.result()
-                    attributes[attr] = values
+            if len(attrs) > 0:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(attrs)) as executor:
+                    # read each attribute concurrently
+                    dataset_workers = [H5Dataset(self, f'{variable}/{attr}', enableAttributes=True) for attr in attrs]
+                    attr_futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
+                    for future in concurrent.futures.as_completed(attr_futures):
+                        attr, values = future.result()
+                        attributes[attr] = values
+
         # wait for reading variable's metadata finishes
         self.waitOnResult(variable)
         metadata = self[variable]
+
         # return results
         return metadata, attributes
 
     #######################
     # listGroup
     #######################
-    def listGroup(self, group, w_attr=True):
+    def listGroup(self, group, w_attr=True, w_inspect=False):
+        variables = set()
+        attributes = set()
+
+        # read elements in group
         try:
             dataset_worker = H5Dataset(self, group, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
             dataset_worker.readDataset()
         except FatalError as e:
             logger.debug(f'H5Coro exited listing the group {group}: {e}')
+
+        # massage group name to remove leading and trailing slashes
         if len(group) > 0 and group[0] == '/':
             group = group[1:]
         if len(group) > 0 and group[-1] == '/':
             group = group[:-1]
-        variables = set()
-        attributes = set()
+
+        # populate variables and attributes by filtering metadataTable 
+        # for all entries starting with group string
         for entry in self.metadataTable:
             if entry.startswith(group):
                 if len(group) > 0:
@@ -2192,6 +2217,19 @@ class H5Coro:
                         attributes.add(element)
                     else:
                         variables.add(element)
+
+        # inspect each variable to get datatype, dimensions, and optionally the attributes
+        if w_inspect and len(variables) > 0:
+            inspected_variables = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(variables)) as executor:
+                # inspect each variable concurrently
+                var_futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr) for variable in variables]
+                for future in concurrent.futures.as_completed(var_futures):
+                    variable, metadata, attributes = future.result()
+                    inspected_variables[variable] = {'metadata': metadata, 'attributes': attributes}
+            variables = inspected_variables # change type of result to dictionary
+
+        # return results
         return variables, attributes
 
     #######################
