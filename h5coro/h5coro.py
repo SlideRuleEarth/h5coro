@@ -34,6 +34,7 @@ import struct
 import logging
 import zlib
 import sys
+import ctypes
 import numpy
 
 ###############################################################################
@@ -41,6 +42,8 @@ import numpy
 ###############################################################################
 
 ENABLE_ATTRIBUTES_DEFAULT = False
+EARLY_EXIT_DEFAULT = True
+META_ONLY_DEFAULT = False
 
 CACHE_LINE_SIZE_DEFAULT = 0x400000
 
@@ -186,7 +189,13 @@ class H5Metadata:
     # str()
     #######################
     def __str__(self):
-        return f'{{\"type\": {self.type}, \"dims\": {self.dimensions}}}'
+        typestr = f'{self.type} (unsupported)'
+        if self.type == H5Dataset.FIXED_POINT_TYPE or self.type == H5Dataset.FLOATING_POINT_TYPE:
+            datatype = H5Dataset.TO_NUMPY_TYPE[self.type][self.signedval][self.typeSize]
+            typestr = f'{datatype}'
+        elif self.type == H5Dataset.STRING_TYPE:
+            typestr = f'{str}'
+        return f'{{\"type\": {typestr}, \"dims\": {self.dimensions}}}'
 
 ###############################################################################
 # H5Dataset Class
@@ -240,8 +249,8 @@ class H5Dataset:
     HEADER_CONT_MSG         = 0x10
     SYMBOL_TABLE_MSG        = 0x11
     ATTRIBUTE_INFO_MSG      = 0x15
-    # data type conversion
-    TO_DATATYPE = {
+    # numpy type conversion
+    TO_NUMPY_TYPE = {
         FIXED_POINT_TYPE: {
             True: {
                 1:  numpy.int8,
@@ -260,11 +269,6 @@ class H5Dataset:
             True: {
                 4:  numpy.single,
                 8:  numpy.double
-            }
-        },
-        STRING_TYPE: {
-            True: {
-                1:  numpy.byte
             }
         }
     }
@@ -321,7 +325,7 @@ class H5Dataset:
         # exit early if only reading metadata
         if self.metaOnly:
             return self.dataset, self.meta
-            
+
         # sanity check data attrbutes
         if self.meta.typeSize <= 0:
             raise FatalError(f'missing data type information for {self.dataset}')
@@ -463,7 +467,7 @@ class H5Dataset:
                 raise FatalError(f'invalid data layout: {self.meta.layout}')
 
         try:
-            # set results
+            # set dimensions
             numcols = 0
             if self.meta.ndims == 0:
                 numcols = 0
@@ -472,15 +476,21 @@ class H5Dataset:
             elif self.meta.ndims >= 2:
                 numcols = self.meta.dimensions[1]
             elements = int(buffer_size / self.meta.typeSize)
-            datatype = self.TO_DATATYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
 
+            # populate values
+            if self.meta.type == self.FIXED_POINT_TYPE or self.meta.type == self.FLOATING_POINT_TYPE:
+                datatype = self.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
+                values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
+            else:
+                datatype = str
+                values = ctypes.create_string_buffer(buffer).value.decode('ascii')
             # fulfill h5 future
             h5values = H5Values(elements,
                                 buffer_size,
                                 self.datasetNumRows,
                                 numcols,
                                 datatype,
-                                numpy.frombuffer(buffer, dtype=datatype, count=elements))
+                                values)
         except Exception as e:
             raise FatalError(f'unable to populate results for {self.resourceObject.resource}/{self.dataset}: {e}')
 
@@ -803,11 +813,11 @@ class H5Dataset:
     def datatypeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position           = self.pos
         version_class               = self.readField(4)
-        self.meta.typeSize               = self.readField(4)
+        self.meta.typeSize          = self.readField(4)
         version                     = (version_class & 0xF0) >> 4
         databits                    = version_class >> 8
-        self.meta.type                   = version_class & 0x0F
-        self.meta.signedval              = ((databits & 0x08) >> 3) == 1
+        self.meta.type              = version_class & 0x0F
+        self.meta.signedval         = ((databits & 0x08) >> 3) == 1
 
         # display
         if verboseOption:
@@ -898,7 +908,6 @@ class H5Dataset:
             # self.pos += self.datatypeMsgHandler(msg_size, obj_hdr_flags)
         # String
         elif self.meta.type == self.STRING_TYPE:
-            self.meta.typeSize = 1
             self.meta.signedval = True
             if verboseOption:
                 padding = databits & 0x0F
@@ -1246,17 +1255,17 @@ class H5Dataset:
 
             # read datatype message
             datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            datatype_bytes_read += (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
-            if errorCheckingOption and (datatype_bytes_read != datatype_size):
-                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read} != {datatype_size}')
-            self.pos += datatype_bytes_read
+            pad_bytes = (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            if errorCheckingOption and ((datatype_bytes_read + pad_bytes) != datatype_size):
+                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
+            self.pos += pad_bytes
 
             # read dataspace message
             dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            dataspace_bytes_read += (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
-            if errorCheckingOption and (dataspace_bytes_read != dataspace_size):
-                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read} != {dataspace_size}')
-            self.pos += dataspace_bytes_read
+            pad_bytes = (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            if errorCheckingOption and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
+                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
+            self.pos += pad_bytes
 
             # set meta data
             self.meta.layout = self.CONTIGUOUS_LAYOUT
@@ -2030,7 +2039,7 @@ def workerThread(dataset_worker):
     try:
         return dataset_worker.readDataset()
     except FatalError as e:
-        logger.error(f'H5Coro encountered an error processing {dataset_worker.resourceObject.resource}/{dataset_worker.dataset}: {e}')
+        logger.warning(f'H5Coro encountered an error processing {dataset_worker.resourceObject.resource}/{dataset_worker.dataset}: {e}')
         return dataset_worker.dataset,{}
 
 def resultThread(resourceObject):
@@ -2050,7 +2059,7 @@ class H5Coro:
     #######################
     # Constants
     #######################
-    H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
+    H5_SIGNATURE_LE = 0x0A1A0A0D46444889
 
     #######################
     # Constructor
@@ -2090,7 +2099,7 @@ class H5Coro:
     #######################
     # readDatasets
     #######################
-    def readDatasets(self, datasets, block=True, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
+    def readDatasets(self, datasets, block=True, earlyExit=EARLY_EXIT_DEFAULT, metaOnly=META_ONLY_DEFAULT, enableAttributes=ENABLE_ATTRIBUTES_DEFAULT):
 
         # check if datasets supplied
         if len(datasets) <= 0:
@@ -2106,7 +2115,7 @@ class H5Coro:
 
         # start threads working on each dataset
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table))
-        dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"], enableAttributes=enableAttributes) for dataset in dataset_table.values()]
+        dataset_workers = [H5Dataset(self, dataset["dataset"], dataset["startrow"], dataset["numrows"], earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes) for dataset in dataset_table.values()]
         self.futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
 
         # initialize results and conditionals for each dataset being read
@@ -2132,14 +2141,27 @@ class H5Coro:
     # inspectVariable
     #######################
     def inspectVariable(self, variable, w_attr=True):
-        dataset_worker = H5Dataset(self, variable, earlyExit=True, metaOnly=True, enableAttributes=w_attr)
-        _, metadata = dataset_worker.readDataset()
-        attr = {}
+        # initialize empty results
+        metadata = {}
+        attributes = {}
+        # kick off non-blocking read of variable metadata
+        self.readDatasets(datasets=[variable], block=False, earlyExit=True, metaOnly=True, enableAttributes=w_attr)
+        # if attributes request
         if w_attr:
-            _, attributes = self.listGroup(variable)
-            for attribute in attributes:
-                attr[attribute] = self.readAttribute(attribute)
-        return metadata, attr
+            # list attributes associated with variable
+            _, attrs = self.listGroup(variable)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(attrs)) as executor:
+                # read each attribute concurrently
+                dataset_workers = [H5Dataset(self, f'{variable}/{attr}', enableAttributes=True) for attr in attrs]
+                attr_futures = [executor.submit(workerThread, dataset_worker) for dataset_worker in dataset_workers]
+                for future in concurrent.futures.as_completed(attr_futures):
+                    attr, values = future.result()
+                    attributes[attr] = values
+        # wait for reading variable's metadata finishes
+        self.waitOnResult(variable)
+        metadata = self[variable]
+        # return results
+        return metadata, attributes
 
     #######################
     # listGroup
