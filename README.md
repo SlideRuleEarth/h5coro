@@ -84,6 +84,21 @@ If the `block` parameter is set to True, then the code will wait for all of the 
 #### (5) Display the Datasets
 The `H5Coro` class implements iteration over each dataset read.  The contents of each dataset are supplied as `numpy` arrays.
 
+## xarray backend
+
+Right now the development of h5coro as a backend for xarray is in progress. To test out this functionality, you will need to:
+
+1. Install h5coro
+2. Clone a local copy of xarray (ex. `git clone <clone_url_for_xarray>`)
+3. Modify the `[options.entry_points]` section of the `setup.cfg` file to include the `xarray.backends` parameter: 
+
+```
+[options.entry_points]
+xarray.backends =
+    h5coro = h5coro.backends.xarray_h5coro:H5CoroBackendEntrypoint
+```
+4. Install your local version of xarray `pip install -e .` from inside the xarray folder.
+
 ## Licensing
 
 **h5coro** is licensed under the 3-clause BSD license found in the LICENSE file at the root of this source tree.
