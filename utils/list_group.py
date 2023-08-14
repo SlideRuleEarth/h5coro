@@ -12,7 +12,8 @@ class args:
     driver = s3driver.S3Driver
 
 h5coro.config(errorChecking=args.checkErrors, verbose=args.verbose, logLevel=logging.INFO)
-h5obj = h5coro.H5Coro(args.granule, args.driver, datasets=args.variables, block=False)
-h_ph = h5obj['/gt2l/heights/h_ph']
-print("heights", h_ph)
-print("groups", h5obj.listGroup('/gt2l/heights'))
+
+h5obj = h5coro.H5Coro(args.granule, args.driver, block=False)
+metadata, attributes = h5obj.inspectVariable('/gt2l/heights/h_ph', w_attr=True)
+print("metadata:", metadata)
+print("attributes:", attributes)
