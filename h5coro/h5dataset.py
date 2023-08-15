@@ -27,9 +27,8 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from h5dataset import H5Dataset
-from h5metadata import H5Metadata
-from h5values import H5Values
+from h5coro.h5metadata import H5Metadata
+from h5coro.h5values import H5Values
 from datetime import datetime
 import struct
 import logging
@@ -110,19 +109,9 @@ class H5Dataset:
     ATTRIBUTE_INFO_MSG      = 0x15
 
     #######################
-    # Factory
-    #######################
-    def factory(resourceObject, dataset, startRow=0, numRows=ALL_ROWS, *, earlyExit, metaOnly, enableAttributes):
-        try:
-            return H5Dataset(resourceObject, dataset, startRow, numRows, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
-        except RuntimeError as e:
-            logger.warning(f'H5Coro encountered an error creating {dataset}: {e}')
-            return None
-
-    #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, *, earlyExit, metaOnly, enableAttributes):
+    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, makeNull=False, *, earlyExit, metaOnly, enableAttributes):
         # initialize object
         self.resourceObject         = resourceObject
         self.earlyExit              = earlyExit
@@ -139,19 +128,27 @@ class H5Dataset:
         self.meta                   = H5Metadata()
         self.values                 = None
         
+        # check for null dataset
+        # (to handle datasets that error out and cannot be read)
+        if makeNull:
+            return
+
         # get metadata for dataset
         if self.dataset in self.resourceObject.metadataTable:
             self.meta = self.resourceObject.metadataTable[self.dataset]
-        else:            
+
+        # metadata not available OR fullscan needed and not yet performed
+        if (self.dataset not in self.resourceObject.metadataTable) or (not earlyExit and not self.meta.fullscan):
             # traverse file for dataset
             dataset_level = 0
             self.readObjHdr(dataset_level)
             # update metadata table
+            self.meta.fullscan = self.meta.fullscan or not earlyExit
             self.resourceObject.metadataTable[self.dataset] = self.meta
 
         # exit early if only reading metadata
         if self.metaOnly:
-            return self.dataset, self.meta
+            return
 
         # sanity check data attrbutes
         if self.meta.typeSize <= 0:
@@ -654,6 +651,7 @@ class H5Dataset:
                 raise FatalError(f'unsupported number of dimensions: {dimensionality}')
 
         # read and populate data dimensions
+        self.meta.dimensions = []
         self.meta.ndims = min(dimensionality, self.MAX_NDIMS)
         if self.meta.ndims > 0:
             for x in range(self.meta.ndims):

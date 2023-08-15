@@ -27,10 +27,9 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from h5dataset import H5Dataset
-from h5promise import H5Promise
+from h5coro.h5dataset import H5Dataset
+from h5coro.h5promise import H5Promise
 import concurrent.futures
-import threading
 import logging
 import sys
 
@@ -117,19 +116,15 @@ class H5Coro:
             return
 
         # make into dictionary
-        dataset_table = {}
+        datasetTable = {}
         for dataset in datasets:
             if type(dataset) == str:
-                dataset_table[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
+                datasetTable[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
             else:
-                dataset_table[dataset["dataset"]] = dataset
-
-        # start threads working on each dataset
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(dataset_table))
-        futures = [executor.submit(H5Dataset.factory, self, dataset["dataset"], dataset["startrow"], dataset["numrows"], earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes) for dataset in dataset_table.values()]
+                datasetTable[dataset["dataset"]] = dataset
 
         # return promise
-        return H5Promise(dataset_table.keys(), futures, block)
+        return H5Promise(self, datasetTable, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
     #######################
     # inspectVariable
@@ -138,7 +133,6 @@ class H5Coro:
         # get metadata for variable
         promise = self.readDatasets([variable], block=True, earlyExit=True, metaOnly=True, enableAttributes=False)
         metadata = promise[variable].meta
-
         # if attributes request
         attributes = {}
         if w_attr:

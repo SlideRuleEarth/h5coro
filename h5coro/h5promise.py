@@ -27,15 +27,30 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import concurrent.futures
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from threading import Condition, Thread
+from h5coro.h5dataset import H5Dataset
+import logging
+
+###############################################################################
+# Logging
+###############################################################################
+
+logger = logging.getLogger(__name__)
 
 ###############################################################################
 # Thread Functions
 ###############################################################################
 
+def datasetThread(resourceObject, dataset, startRow=0, numRows=H5Dataset.ALL_ROWS, *, earlyExit, metaOnly, enableAttributes):
+    try:
+        return H5Dataset(resourceObject, dataset, startRow, numRows, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
+    except RuntimeError as e:
+        logger.warning(f'H5Coro encountered error reading {dataset}: {e}')
+        return H5Dataset(resourceObject, dataset, startRow, numRows, makeNull=True, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
+
 def resultThread(promise, futures):
-    for future in concurrent.futures.as_completed(futures):
+    for future in as_completed(futures):
         h5dataset = future.result()
         promise.conditions[h5dataset.dataset].acquire()
         promise.datasets[h5dataset.dataset] = h5dataset
@@ -51,13 +66,18 @@ class H5Promise:
     #######################
     # Constructor
     #######################
-    def __init__(self, datasets, futures, block):
+    def __init__(self, resourceObject, datasetTable, block, *, earlyExit, metaOnly, enableAttributes):
         # initialize dataset values
         self.datasets = {}
         self.conditions = {}
-        for dataset in datasets:
+        for dataset in datasetTable:
             self.datasets[dataset] = None
             self.conditions[dataset] = Condition()
+
+        # start threads working on each dataset
+        executor = ThreadPoolExecutor(max_workers=len(datasetTable))
+        futures = [executor.submit(datasetThread, resourceObject, dataset["dataset"], dataset["startrow"], dataset["numrows"], earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes) for dataset in datasetTable.values()]
+
         # wait for datasets to be populated OR populate datasets in the background
         if block:
             resultThread(self, futures)
