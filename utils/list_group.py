@@ -13,9 +13,9 @@ class args:
 h5coro.config(errorChecking=args.checkErrors, verbose=args.verbose, logLevel=logging.INFO)
 h5obj = h5coro.H5Coro(args.granule, args.driver, block=False)
 
-metadata, attributes = h5obj.inspectVariable('/gt2l/heights/h_ph', w_attr=True)
-print("metadata:", metadata)
-print("attributes:", attributes)
+#metadata, attributes = h5obj.inspectVariable('/gt2l/heights/h_ph', w_attr=True)
+#print("metadata:", metadata)
+#print("attributes:", attributes)
 #print("dimensions:", metadata.dimensions)
 #print("coordinates:", attributes["/gt2l/heights/h_ph/coordinates"].values)
 
