@@ -41,19 +41,15 @@ from utils import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsRead
 #
 # read ATL06 resource and return variable's data within polygon
 #
-def subsetted_read(profiler, region, variable):
+def subsetted_read(polygon, resource, variable, tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]):
 
     # Initialize return variables
     data = []
     latitudes = []
     longitudes = []
-    distances = []
 
     # Create polygon
-    poly = [Point(coord["lon"], coord["lat"]) for coord in region]
-
-    # List of tracks to read
-    tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]
+    poly = [Point(coord["lon"], coord["lat"]) for coord in polygon]
 
     # Build list of each lat,lon dataset to read
     geodatasets = []
@@ -90,8 +86,7 @@ def subsetted_read(profiler, region, variable):
         if numrows > 0:
             start_ph = int(sum(cnt_dataset[:startrow]))
             num_ph = int(sum(cnt_dataset[startrow:startrow+numrows]))
-            datasets.append({"dataset": prefix+variable, "startrow": start_ph, "numrows": num_ph, "prefix": prefix, "geoprefix": geoprefix})
-            datasets.append({"dataset": prefix+"dist_ph_along", "startrow": start_ph, "numrows": num_ph, "prefix": prefix, "geoprefix": geoprefix})
+            datasets.append({"dataset": prefix+variable, "startrow": start_ph, "numrows": num_ph, "col": 0, "startseg": startrow, "numsegs": numrows, "prefix": prefix, "geoprefix": geoprefix})
 
     # Read variable from resource
     if len(datasets) > 0:
@@ -99,20 +94,18 @@ def subsetted_read(profiler, region, variable):
 
     # Append results
     for entry in datasets:
-        segments = geocoords[entry["geoprefix"]+"segment_ph_cnt"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
+        segments = geocoords[entry["geoprefix"]+"segment_ph_cnt"][entry["startseg"]:entry["startseg"]+entry["numsegs"]].tolist()
         k = 0
         for num_ph in segments:
             for i in range(num_ph):
-                latitudes += [geocoords[entry["geoprefix"]+"reference_photon_lat"][entry["startrow"]+i]]
-                longitudes += [geocoords[entry["geoprefix"]+"reference_photon_lon"][entry["startrow"]+i]]
-                distances += [geocoords[entry["geoprefix"]+"segment_dist_x"][entry["startrow"]+i] + values[entry["prefix"]+"dist_ph_along"][k]]
-                k += 1
+                latitudes += [geocoords[entry["geoprefix"]+"reference_photon_lat"][k]]
+                longitudes += [geocoords[entry["geoprefix"]+"reference_photon_lon"][k]]
+            k += 1
         data += values[entry["prefix"]+variable].tolist()
 
     # Return results
     return {"latitude":  latitudes,
             "longitude": longitudes,
-            "distances": distances,
             variable:    data}
 
 #
