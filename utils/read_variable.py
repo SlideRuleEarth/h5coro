@@ -36,11 +36,11 @@ from h5coro import s3driver, filedriver
 # COMMAND LINE ARGUMENTS
 ###############################################################################
 
-parser = argparse.ArgumentParser(description="""Subset ATL06 granules""")
-parser.add_argument('--granule','-g', type=str, default="/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
+parser = argparse.ArgumentParser(description="""Read variable from granule""")
+parser.add_argument('--granule','-g', type=str, default="sliderule/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
 parser.add_argument('--variables','-x', nargs='+', type=str, default=["/gt2l/heights/h_ph"])
 parser.add_argument('--profile','-p', type=str, default="default")
-parser.add_argument('--driver','-d', type=str, default="file") # s3
+parser.add_argument('--driver','-d', type=str, default="s3") # s3 or file
 parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 parser.add_argument('--enableAttributes','-a', action='store_true', default=False)
@@ -59,9 +59,10 @@ else:
 ###############################################################################
 
 try:
-    h5coro.config(errorChecking=args.checkErrors, verbose=args.verbose, enableAttributes=args.enableAttributes, logLevel=logging.INFO)
-    h5obj = h5coro.H5Coro(args.granule, args.driver, datasets=args.variables, block=False, credentials={"profile":args.profile})
-    for variable in h5obj:
-        print(f'{variable}: {h5obj[variable][args.slice[0]:args.slice[1]]}')
+    h5coro.config(logLevel=logging.INFO)
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials={"profile":args.profile})
+    promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
+    for variable in promise:
+        print(f'{variable}: {promise[variable].values[args.slice[0]:args.slice[1]]}')
 except Exception as e:
     print(f'{e.__class__.__name__}: {e}')
