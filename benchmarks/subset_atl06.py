@@ -28,7 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import time
-from utils import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsReader, Ros3Reader, H5pyReader, LocalH5CoroReader, inpoly, region
+from profiler import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsReader, Ros3Reader, H5pyReader, LocalH5CoroReader, inpoly, region
 
 ###############################################################################
 # LOCAL FUNCTIONS

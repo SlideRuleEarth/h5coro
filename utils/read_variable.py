@@ -63,6 +63,6 @@ try:
     h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials={"profile":args.profile})
     promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
     for variable in promise:
-        print(f'{variable}: {promise[variable].values[args.slice[0]:args.slice[1]]}')
+        print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
 except Exception as e:
     print(f'{e.__class__.__name__}: {e}')

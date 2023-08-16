@@ -63,7 +63,7 @@ parser.add_argument('--variable03','-x', type=str, default="h_ph")
 parser.add_argument('--variable06','-y', type=str, default="h_li")
 parser.add_argument('--domain','-d', type=str, default="slideruleearth.io")
 parser.add_argument('--organization','-o', type=str, default="sliderule")
-parser.add_argument('--desired_nodes','-n', type=int, default=7)
+parser.add_argument('--desired_nodes','-n', type=int, default=1)
 parser.add_argument('--time_to_live','-l', type=int, default=120)
 parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--enableAttributes','-t', action='store_true', default=False)
@@ -87,7 +87,7 @@ elif args.loglvl == "DEBUG":
     loglevel = logging.DEBUG
 
 # Configure H5Coro
-h5coro.config(errorChecking=args.checkErrors, verbose=args.verbose, enableAttributes=args.enableAttributes, logLevel=loglevel)
+h5coro.config(logLevel=loglevel)
 
 # Initialize SlideRule Client
 sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
@@ -105,10 +105,9 @@ region = sliderule.toregion(args.aoi)["poly"]
 class H5CoroReader:
     def __init__(self, resource,):
         self.resource = resource
-        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver)
+        self.h5obj = h5coro.H5Coro(args.bucket + self.resource, s3driver.S3Driver, errorChecking=args.checkErrors, verbose=args.verbose)
     def read(self, datasets):
-        self.h5obj.readDatasets(datasets=datasets, block=True)
-        return self.h5obj
+        return self.h5obj.readDatasets(datasets=datasets, block=True, enableAttributes=args.enableAttributes)
 
 #
 # Class: SlideruleReader
@@ -173,9 +172,9 @@ class H5pyReader:
 class LocalH5CoroReader:
     def __init__(self, resource):
         self.resource = resource
+        self.h5obj = h5coro.H5Coro(self.resource, filedriver.FileDriver)
     def read(self, datasets):
-        self.h5obj = h5coro.H5Coro(self.resource, filedriver.FileDriver, datasets=datasets, block=True)
-        return self.h5obj
+        return self.h5obj.readDatasets(datasets=datasets, block=True, enableAttributes=args.enableAttributes)
 
 #
 # Class: Profiler

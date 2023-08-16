@@ -102,7 +102,7 @@ class H5Promise:
     #######################
     def __getitem__(self, key):
         self.waitOnResult(key)
-        return self.datasets[key]
+        return self.datasets[key].values
 
     #######################
     # representation

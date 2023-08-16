@@ -132,7 +132,7 @@ class H5Coro:
     def inspectVariable(self, variable, w_attr=True):
         # get metadata for variable
         promise = self.readDatasets([variable], block=True, earlyExit=True, metaOnly=True, enableAttributes=False)
-        metadata = promise[variable].meta
+        metadata = promise.datasets[variable].meta
         # if attributes request
         attributes = {}
         if w_attr:
@@ -142,7 +142,7 @@ class H5Coro:
             # read each attribute
             promise = self.readDatasets(attr_paths, enableAttributes=True)
             for attr in attr_paths:
-                attributes[attr] = promise[attr].values
+                attributes[attr] = promise.datasets[attr].values
 
         # return results
         return metadata, attributes
