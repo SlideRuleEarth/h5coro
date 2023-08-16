@@ -204,7 +204,7 @@ class H5Coro:
     #######################
     def readAttribute(self, attribute):
         promise = self.readDatasets([attribute], block=True, enableAttributes=True)
-        return promise.values
+        return promise[attribute].values
 
     #######################
     # ioRequest

@@ -1129,6 +1129,7 @@ class H5Dataset:
     # attributeMsgHandler
     #######################
     def attributeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
+        PAD_SIZE            = 8
         starting_position   = self.pos
         version             = self.readField(1)
         self.pos           += 1
@@ -1145,9 +1146,13 @@ class H5Dataset:
         if self.resourceObject.errorChecking and (version != 1):
             raise FatalError(f'invalid attribute version: {version}')
 
+        # update message sizes
+        datatype_size += ((PAD_SIZE - (datatype_size % PAD_SIZE)) % PAD_SIZE)
+        dataspace_size += ((PAD_SIZE - (dataspace_size % PAD_SIZE)) % PAD_SIZE)
+
         # read attribute name
         attr_name = self.readArray(name_size).tobytes().decode('utf-8')[:-1]
-        self.pos += (8 - (name_size % 8)) % 8; # align to next 8-byte boundary
+        self.pos += (PAD_SIZE - (name_size % PAD_SIZE)) % PAD_SIZE; # align to next x-byte boundary
         attr_path = '/'.join(self.datasetPath[:dlvl] + [attr_name])
 
         # display
@@ -1165,14 +1170,14 @@ class H5Dataset:
 
             # read datatype message
             datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            pad_bytes = (8 - (datatype_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            pad_bytes = (PAD_SIZE - (datatype_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
             if self.resourceObject.errorChecking and ((datatype_bytes_read + pad_bytes) != datatype_size):
                 raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
             self.pos += pad_bytes
 
             # read dataspace message
             dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            pad_bytes = (8 - (dataspace_bytes_read % 8)) % 8 # align to next 8-byte boundary
+            pad_bytes = (PAD_SIZE - (dataspace_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
             if self.resourceObject.errorChecking and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
                 raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
             self.pos += pad_bytes
