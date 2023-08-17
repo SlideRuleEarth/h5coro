@@ -30,7 +30,7 @@
 import sys
 import time
 from sliderule import icesat2
-from utils import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsReader, Ros3Reader, H5pyReader, LocalH5CoroReader, inpoly, region
+from profiler import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsReader, Ros3Reader, H5pyReader, LocalH5CoroReader, inpoly, region
 
 ###############################################################################
 # LOCAL FUNCTIONS
@@ -41,7 +41,7 @@ from utils import args, Point, Profiler, H5CoroReader, SlideruleReader, S3fsRead
 #
 # read ATL06 resource and return variable's data within polygon
 #
-def subsetted_read(polygon, resource, variable, tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]):
+def subsetted_read(profiler, region, variable, tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]):
 
     # Initialize return variables
     data = []
@@ -49,7 +49,7 @@ def subsetted_read(polygon, resource, variable, tracks = ["1l", "1r", "2l", "2r"
     longitudes = []
 
     # Create polygon
-    poly = [Point(coord["lon"], coord["lat"]) for coord in polygon]
+    poly = [Point(coord["lon"], coord["lat"]) for coord in region]
 
     # Build list of each lat,lon dataset to read
     geodatasets = []
@@ -159,10 +159,6 @@ for profile in profiles:
     start = time.perf_counter()
     result = subsetted_read(profiler, region, variable=args.variable03)
     print(f'[{len(result[args.variable03])}]: {profiler.duration:.2f} {(time.perf_counter() - start):.2f}')
-
-# Display H5Coro Performance Statistics
-h5obj = profiles["h5coro"].read([])
-print(f'Metadata Table Hits: {h5obj.metaDataHits}')
 
 # Profile SlideRule ATL03 Subsetter - flatrec03 issue
 #print(f'Profiling sliderule-atl03s...', end='')

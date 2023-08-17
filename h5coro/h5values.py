@@ -27,42 +27,49 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
-import argparse
-import h5coro
-from h5coro import s3driver, filedriver
-
 ###############################################################################
-# COMMAND LINE ARGUMENTS
+# H5Values Class
 ###############################################################################
 
-parser = argparse.ArgumentParser(description="""Read variable from granule""")
-parser.add_argument('--granule','-g', type=str, default="sliderule/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
-parser.add_argument('--variables','-x', nargs='+', type=str, default=["/gt2l/heights/h_ph"])
-parser.add_argument('--profile','-p', type=str, default="default")
-parser.add_argument('--driver','-d', type=str, default="s3") # s3 or file
-parser.add_argument('--checkErrors','-e', action='store_true', default=False)
-parser.add_argument('--verbose','-v', action='store_true', default=False)
-parser.add_argument('--enableAttributes','-a', action='store_true', default=False)
-parser.add_argument('--slice','-s', nargs=2, type=int, default=[0,10])
-args,_ = parser.parse_known_args()
+class H5Values:
 
-if args.driver == "file":
-    args.driver = filedriver.FileDriver
-elif args.driver == "s3":
-    args.driver = s3driver.S3Driver
-else:
-    args.driver = None
+    #######################
+    # Constructor
+    #######################
+    def __init__(self, _elements, _datasize, _numrows, _numcols, _datatype, _values):
+        self.elements   = _elements
+        self.datasize   = _datasize
+        self.numrows    = _numrows
+        self.numcols    = _numcols
+        self.datatype   = _datatype
+        self.values     = _values
 
-###############################################################################
-# MAIN
-###############################################################################
+    #######################
+    # operator: []
+    #######################
+    def __getitem__(self, key):
+        return self.values[key]
 
-try:
-    h5coro.config(logLevel=logging.INFO)
-    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials={"profile":args.profile})
-    promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
-    for variable in promise:
-        print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
-except Exception as e:
-    print(f'{e.__class__.__name__}: {e}')
+    #######################
+    # length
+    #######################
+    def __len__(self):
+        return len(self.values)
+
+    #######################
+    # representation
+    #######################
+    def __repr__(self):
+        return f'{{"elements": {self.elements}, "datasize": {self.datasize}, "numrows": {self.numrows}, "numcols": {self.numcols}, "datatype": {self.datatype}, "values": {self.values}}}'
+
+    #######################
+    # print
+    #######################
+    def __str__(self):
+        return self.__repr__()
+
+    #######################
+    # tolist
+    #######################
+    def tolist(self):
+        return list(self.values)
