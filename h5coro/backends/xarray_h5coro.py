@@ -1,3 +1,5 @@
+import logging
+
 from xarray.backends import BackendEntrypoint
 from h5coro import h5coro, s3driver, filedriver
 import xarray as xr
@@ -26,7 +28,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         or aws boto3 object or earthaccess Auth object
         '''
         
-        h5coro.config(errorChecking=True, verbose=False, enableAttributes=False)
+        h5coro.config(logLevel=logging.ERROR)
         
         # format credentials
         if isinstance(creds, earthaccess.auth.Auth):
@@ -39,32 +41,59 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         # connect to the s3 object
         h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=creds)
         
-        # retrieve a list of variables in that group and create a list of dataset paths
-        variables = h5obj.listDirectory(group)
-        if drop_variables:
-            variables = [v for v in variables if v not in drop_variables]
-        datasets = {v: os.path.join(group, v) for v in variables}
+        # define a function for formatting the output
+        def format_variable_attrs(results):
+            attrs = {}
+            for attribute, value in results["attributes"].items():
+                value_str = "<unsupported>"
+                if value != None:
+                    value_str = f'{value.values}'
+                attrs[attribute] = value_str
+            return attrs
+        
+        # loop through that dictionary of datasets to generate a list of groups/variables and attrs
+        variables, attributes = h5obj.listGroup(group, w_attr=True, w_inspect=True)
+        dataarray_dicts = {}
+        coords = {}
+        for variable, results in variables.items():
+            # pull out data
+            print('------ PROCESSING VARIABLE -----', variable)
+            var_data = h5obj.readDatasets(datasets=[variable[1:]], block=True)
+            print('looking at readDatasets output #1', var_data)
+            
+            # pull out metadata
+            var_attrs = format_variable_attrs(results)
+            coordinate_names = [os.path.join(group, var) for var in ['lon_ph', 'lat_ph', 'delta_time',]]
+            if variable in coordinate_names:
+                coords[variable.split('/')[-1]] = var_data[variable[1:]]
+            elif variable in os.path.join(group, 'signal_conf_ph'):
+                # ignore the 2d variable
+                pass
+            else:
+                print('using key ', variable[1:], 'on keys list', var_data.keys())
+                print('looking at readDatasets output #1', var_data[variable[1:]])
+                dataarray_dicts[variable.split('/')[-1]] = ("delta_time", var_data[variable[1:]])
+        
+        # loop through each of the attrs to create a dict of them
+        
+        # loop through each of the variables and grab their data + attributes
+        
+        # determine which of the variables are >2D, drop
+        
+        # determine which of the variables are coordinate variables
+        
+        # UNCLEAR: at what point do I read the data? Does that only happen for variables?
         
         # read the data
-        h5obj.readDatasets(datasets=datasets.values(), block=True)
+        # h5obj.readDatasets(datasets=datasets.values(), block=True)
         
-        # TODO make a list of coordiante variables
+        # TODO make a list of coordinate variables
         # TODO check for and remove any data variables that have > 1 dimension
-        
-        # create a dictionary that xarray can use to create DataArrays
-        dataarray_dicts = {}
-        for v in variables:
-            # exclude the coordinate variables (and the problem variable)
-            if v not in ['lon_ph', 'lat_ph', 'delta_time', 'signal_conf_ph']:
-                dataarray_dicts[v] = ("delta_time", h5obj[os.path.join(group, v)].values)
-        
+        print(coords)
         return xr.Dataset(
             dataarray_dicts,
-            coords={
-                "lon_ph": h5obj[datasets['lon_ph']].values,
-                "lat_ph": h5obj[datasets['lat_ph']].values,
-                "delta_time": h5obj[datasets['delta_time']].values,
-            },
+            coords=coords,
+            attrs={'test': 123},
         )
 
     open_dataset_parameters = ["filename_or_obj", "drop_variables"]
@@ -76,4 +105,4 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             return False
         return ext in {".h5", ".h5co"}
 
-    description = "Support for reading HDF5 files in S3 from H5Coro in Xarray"
+    description = "Support for reading HDF5 files in S3 from H5Coro in xarray"
