@@ -1,4 +1,5 @@
 import logging
+import re
 
 from xarray.backends import BackendEntrypoint
 from h5coro import h5coro, s3driver, filedriver
@@ -64,33 +65,39 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             var_attrs = format_variable_attrs(results)
             
             # check dimensionality and build dataarray dictionary with relevant variables
-            if results['metadata'].ndims > 1:
+            if results['metadata'].ndims and results['metadata'].ndims > 1:
                 # ignore the 2d variable
                 # TODO raise warning here
-                pass  # this could be continue?
+                continue
             else:
                 # build the coordinate list
-                coord = results['attributes'][os.path.join(variable, 'coordinates')].values.split(' ')
-                for c in coord:
-                    if not os.path.join(group, c) in coordinate_names:
-                        coordinate_names.append(os.path.join(group, c))
+                try:
+                    coord = results['attributes'][os.path.join(variable, 'coordinates')].values
+                    coord = re.split(';|,| |\n', coord)
+                    coord = [c for c in coord if c]
+                    print('COORD', coord)
+                    for c in coord:
+                        if not os.path.join(group, c) in coordinate_names:
+                            print('appending ', os.path.join(group, c))
+                            coordinate_names.append(os.path.join(group, c))
+                except KeyError:
+                    # no coordinates were listed for that variable
+                    coord = [None]
+
                 # add data to the dict
                 dataarray_dicts[variable.split('/')[-1]] = (coord[0], var_data[variable[1:]].values, var_attrs)
         
-        print('darray dicts', dataarray_dicts)
         # build the dictionary of coordinates
         coords = {}
+        print('coordinate names', coordinate_names)
         for coordinate in coordinate_names:
             print('coordinate', coordinate)
             short_name = coordinate.split('/')[-1]
             # drop the coordiantes from the dataarray
             coord_values = dataarray_dicts.pop(short_name)
-            print('coord vals', coord_values)
             # add the coordiantes to the dictionary
             coords[short_name] = coord_values[1]
 
-        # TODO make a list of coordinate variables
-        print(coords)
         return xr.Dataset(
             dataarray_dicts,
             coords=coords,
