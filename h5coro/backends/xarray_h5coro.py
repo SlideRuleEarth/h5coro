@@ -54,7 +54,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         # loop through that dictionary of datasets to generate a list of groups/variables and attrs
         variables, attributes = h5obj.listGroup(group, w_attr=True, w_inspect=True)
         dataarray_dicts = {}
-        coords = {}
+        coordinate_names = []
         for variable, results in variables.items():
             # pull out data
             print('------ PROCESSING VARIABLE -----', variable)
@@ -62,17 +62,34 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             
             # pull out metadata
             var_attrs = format_variable_attrs(results)
-            coordinate_names = [os.path.join(group, var) for var in ['lon_ph', 'lat_ph', 'delta_time',]]
-            if variable in coordinate_names:
-                coords[variable.split('/')[-1]] = var_data[variable[1:]].values
-            elif variable in os.path.join(group, 'signal_conf_ph'):
+            
+            # check dimensionality and build dataarray dictionary with relevant variables
+            if results['metadata'].ndims > 1:
                 # ignore the 2d variable
-                pass
+                # TODO raise warning here
+                pass  # this could be continue?
             else:
-                dataarray_dicts[variable.split('/')[-1]] = ("delta_time", var_data[variable[1:]])
+                # build the coordinate list
+                coord = results['attributes'][os.path.join(variable, 'coordinates')].values.split(' ')
+                for c in coord:
+                    if not os.path.join(group, c) in coordinate_names:
+                        coordinate_names.append(os.path.join(group, c))
+                # add data to the dict
+                dataarray_dicts[variable.split('/')[-1]] = (coord[0], var_data[variable[1:]].values)
         
+        print('darray dicts', dataarray_dicts)
+        # build the dictionary of coordinates
+        coords = {}
+        for coordinate in coordinate_names:
+            print('coordinate', coordinate)
+            short_name = coordinate.split('/')[-1]
+            # drop the coordiantes from the dataarray
+            coord_values = dataarray_dicts.pop(short_name)
+            print('coord vals', coord_values)
+            # add the coordiantes to the dictionary
+            coords[short_name] = coord_values[1]
+
         # TODO make a list of coordinate variables
-        # TODO check for and remove any data variables that have > 1 dimension
         print(coords)
         return xr.Dataset(
             dataarray_dicts,
