@@ -133,6 +133,9 @@ class H5Dataset:
         if makeNull:
             return
 
+        # initialize local variables
+        dataset_level = 0
+
         # get metadata for dataset
         if self.dataset in self.resourceObject.metadataTable:
             self.meta = self.resourceObject.metadataTable[self.dataset]
@@ -140,7 +143,6 @@ class H5Dataset:
         # metadata not available
         if self.meta.typeSize == 0 or not earlyExit:
             # traverse file for dataset
-            dataset_level = 0
             self.readObjHdr(dataset_level)
             # update metadata table
             if self.meta.typeSize != 0:
