@@ -75,7 +75,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                     if not os.path.join(group, c) in coordinate_names:
                         coordinate_names.append(os.path.join(group, c))
                 # add data to the dict
-                dataarray_dicts[variable.split('/')[-1]] = (coord[0], var_data[variable[1:]].values)
+                dataarray_dicts[variable.split('/')[-1]] = (coord[0], var_data[variable[1:]].values, var_attrs)
         
         print('darray dicts', dataarray_dicts)
         # build the dictionary of coordinates
