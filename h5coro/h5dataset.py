@@ -137,14 +137,14 @@ class H5Dataset:
         if self.dataset in self.resourceObject.metadataTable:
             self.meta = self.resourceObject.metadataTable[self.dataset]
 
-        # metadata not available OR fullscan needed and not yet performed
-        if (self.dataset not in self.resourceObject.metadataTable) or (not earlyExit and not self.meta.fullscan):
+        # metadata not available
+        if self.meta.typeSize == 0 or not earlyExit:
             # traverse file for dataset
             dataset_level = 0
             self.readObjHdr(dataset_level)
             # update metadata table
-            self.meta.fullscan = self.meta.fullscan or not earlyExit
-            self.resourceObject.metadataTable[self.dataset] = self.meta
+            if self.meta.typeSize != 0:
+                self.resourceObject.metadataTable[self.dataset] = self.meta
 
         # exit early if only reading metadata
         if self.metaOnly:
