@@ -59,33 +59,17 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             # pull out data
             print('------ PROCESSING VARIABLE -----', variable)
             var_data = h5obj.readDatasets(datasets=[variable[1:]], block=True)
-            print('looking at readDatasets output #1', var_data)
             
             # pull out metadata
             var_attrs = format_variable_attrs(results)
             coordinate_names = [os.path.join(group, var) for var in ['lon_ph', 'lat_ph', 'delta_time',]]
             if variable in coordinate_names:
-                coords[variable.split('/')[-1]] = var_data[variable[1:]]
+                coords[variable.split('/')[-1]] = var_data[variable[1:]].values
             elif variable in os.path.join(group, 'signal_conf_ph'):
                 # ignore the 2d variable
                 pass
             else:
-                print('using key ', variable[1:], 'on keys list', var_data.keys())
-                print('looking at readDatasets output #1', var_data[variable[1:]])
                 dataarray_dicts[variable.split('/')[-1]] = ("delta_time", var_data[variable[1:]])
-        
-        # loop through each of the attrs to create a dict of them
-        
-        # loop through each of the variables and grab their data + attributes
-        
-        # determine which of the variables are >2D, drop
-        
-        # determine which of the variables are coordinate variables
-        
-        # UNCLEAR: at what point do I read the data? Does that only happen for variables?
-        
-        # read the data
-        # h5obj.readDatasets(datasets=datasets.values(), block=True)
         
         # TODO make a list of coordinate variables
         # TODO check for and remove any data variables that have > 1 dimension
