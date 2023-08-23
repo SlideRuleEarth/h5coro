@@ -100,7 +100,6 @@ class H5Metadata:
         self.chunkDimensions    = []
         self.elementSize        = 0
         self.isattribute        = False
-        self.fullscan           = False
         self.filter             = {
             self.DEFLATE_FILTER:        False,
             self.SHUFFLE_FILTER:        False,
