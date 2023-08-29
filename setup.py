@@ -33,4 +33,7 @@ setup(
     packages=find_packages(),
     version=version,
     install_requires=install_requires,
+    entry_points={
+        "xarray.backends": ["h5coro=h5coro.backends.xarray_h5coro:H5CoroBackendEntrypoint"],
+    },
 )
