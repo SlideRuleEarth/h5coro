@@ -155,11 +155,9 @@ class H5Coro:
         # if attributes request
         attributes = {}
         if w_attr:
-            print("INSPECT", variable)
             # list attributes associated with variable
             _, attrs = self.listGroup(variable, w_attr)
             attr_paths = [f'{variable}/{attr}' for attr in attrs]
-            print("ATTR", attr_paths)
             # read each attribute
             promise = self.readDatasets(attr_paths, enableAttributes=True)
             for attr in attrs:
@@ -183,16 +181,13 @@ class H5Coro:
     
             # populate variables and attributes by filtering pathAddresses 
             # for all entries starting with group string
-            print("GROUP", group)
             for path in self.pathAddresses.keys():
                 element = isolateElement(path, group)
                 if element != None:
                     if path in self.metadataTable and self.metadataTable[path].isattribute:
-                        print("... ATTRIBUTE", element)
                         attributes.add(element)
                     else:
                         variables.add(element)
-                        print("... VARIABLE", element)
 
             # inspect each variable to get datatype, dimensions, and optionally the attributes
             if w_inspect and len(variables) > 0:
