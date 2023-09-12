@@ -118,6 +118,7 @@ class H5Dataset:
         self.metaOnly               = metaOnly
         self.enableAttributes       = enableAttributes
         self.pos                    = self.resourceObject.rootAddress
+        self.currObjHdrPos          = 0
         self.dataset                = dataset
         self.datasetStartRow        = startRow
         self.datasetNumRows         = numRows
@@ -415,13 +416,14 @@ class H5Dataset:
         # check mata data table
         for lvl in range(self.datasetPathLevels, dlvl, -1):
             group_path = '/'.join(self.datasetPath[:lvl])
-            if group_path in self.resourceObject.metadataTable:
-                self.pos = self.resourceObject.metadataTable[group_path].address
-                self.resourceObject.metaDataHits += 1
+            if group_path in self.resourceObject.pathAddresses:                
+                self.pos = self.resourceObject.pathAddresses[group_path]
                 dlvl = lvl
+                break
         # process header
+        self.currObjHdrPos = self.pos
         version_peek = self.readField(1)
-        self.pos -= 1
+        self.pos = self.currObjHdrPos
         if version_peek == 1:
             self.readObjHdrV1(dlvl)
         else:
@@ -964,7 +966,7 @@ class H5Dataset:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             # update meta data table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
+            self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
             # follow link
             if follow_link:
                 return_position = self.pos
@@ -1164,49 +1166,40 @@ class H5Dataset:
             logger.info(f'Datatype Size:        {datatype_size}')
             logger.info(f'Dataspace Size:       {dataspace_size}')
 
+        # read datatype message
+        datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
+        pad_bytes = (PAD_SIZE - (datatype_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
+        if self.resourceObject.errorChecking and ((datatype_bytes_read + pad_bytes) != datatype_size):
+            raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
+        self.pos += pad_bytes
+
+        # read dataspace message
+        dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
+        pad_bytes = (PAD_SIZE - (dataspace_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
+        if self.resourceObject.errorChecking and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
+            raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
+        self.pos += pad_bytes
+
+        # set meta data
+        self.meta.isattribute = True
+        self.meta.layout = self.CONTIGUOUS_LAYOUT
+        for f in self.meta.filter.keys():
+            self.meta.filter[f] = False
+        self.meta.address = self.pos
+        self.meta.size = msg_size - (self.pos - starting_position)
+        self.resourceObject.metadataTable[attr_path] = self.meta
+        self.resourceObject.pathAddresses[attr_path] = self.currObjHdrPos
+
+        # move to end of data
+        self.pos += self.meta.size
+
         # check if desired attribute
         if( ((dlvl + 1) == len(self.datasetPath)) and
             (attr_name == self.datasetPath[dlvl]) ):
             self.datasetFound = True
-            self.meta.isattribute = True
 
-            # read datatype message
-            datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            pad_bytes = (PAD_SIZE - (datatype_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
-            if self.resourceObject.errorChecking and ((datatype_bytes_read + pad_bytes) != datatype_size):
-                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
-            self.pos += pad_bytes
-
-            # read dataspace message
-            dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            pad_bytes = (PAD_SIZE - (dataspace_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
-            if self.resourceObject.errorChecking and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
-                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
-            self.pos += pad_bytes
-
-            # set meta data
-            self.meta.layout = self.CONTIGUOUS_LAYOUT
-            for f in self.meta.filter.keys():
-                self.meta.filter[f] = False
-            self.meta.address = self.pos
-            self.meta.size = msg_size - (self.pos - starting_position)
-
-            # move to end of data
-            self.pos += self.meta.size
-
-            # update metadata table
-            self.resourceObject.metadataTable[attr_path] = self.meta
-
-            # return bytes read
-            return self.pos - starting_position
-        else:
-            # update metadata table
-            self.resourceObject.metadataTable[attr_path] = H5Metadata(self.pos + datatype_size + dataspace_size)
-            self.resourceObject.metadataTable[attr_path].isattribute = True
-
-            # skip processing message
-            self.pos = starting_position + msg_size
-            return msg_size
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # headercontMsgHandler
@@ -1448,9 +1441,9 @@ class H5Dataset:
                 logger.info(f'Link Name:            {link_name}')
                 logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
 
-            # update meta data table
+            # update path address table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
+            self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
 
             # process link
             return_position = self.pos

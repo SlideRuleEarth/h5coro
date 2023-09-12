@@ -15,6 +15,7 @@ parser.add_argument('--profile','-p', type=str, default="default")
 parser.add_argument('--driver','-d', type=str, default="s3") # s3 or file
 parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
+parser.add_argument('--loglevel','-l', type=str, default="unset")
 parser.add_argument('--daac','-c', type=str, default="NSIDC")
 args,_ = parser.parse_known_args()
 
@@ -24,6 +25,25 @@ elif args.driver == "s3":
     args.driver = s3driver.S3Driver
 else:
     args.driver = None
+
+if args.loglevel != "unset":
+    args.verbose = True
+    if args.loglevel == "DEBUG":
+        args.loglevel = logging.DEBUG
+    elif args.loglevel == "INFO":
+        args.loglevel = logging.INFO
+    elif args.loglevel == "WARNING":
+        args.loglevel = logging.WARNING
+    elif args.loglevel == "WARN":
+        args.loglevel = logging.WARN
+    elif args.loglevel == "ERROR":
+        args.loglevel = logging.ERROR
+    elif args.loglevel == "FATAL":
+        args.loglevel = logging.FATAL
+    elif args.loglevel == "CRITICAL":
+        args.loglevel = logging.CRITICAL
+else:
+    args.loglevel = logging.ERROR
 
 credentials = {"profile":args.profile}
 if args.daac != "None":
@@ -38,17 +58,19 @@ if args.daac != "None":
 ###############################################################################
 
 try:
-    h5coro.config(logLevel=logging.ERROR)
+    h5coro.config(logLevel=args.loglevel)
     h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
 
-    variables, attributes = h5obj.listGroup(args.group, w_attr=True, w_inspect=True)
-    for variable, results in variables.items():
-        print(f'{variable}: {results["metadata"]}')
-        for attribute, value in results["attributes"].items():
+    group = h5obj.listGroup(args.group, w_attr=True, w_inspect=True)
+    for variable, listing in group.items():
+        print(f'{variable}:')
+        for key, value in listing.items():
             value_str = "<unsupported>"
-            if value != None:
+            if key == '__metadata__':
+                value_str = f'{value}'
+            elif value != None:
                 value_str = f'{value.values}'
-            print(f'  {attribute}: {value_str}')
+            print(f'  {key}: {value_str}')
 except Exception as e:
     print(f'{e.__class__.__name__}: {e}')
     raise
