@@ -149,20 +149,24 @@ class H5Coro:
     #######################
     def inspectVariable(self, variable, w_attr=True):
         variable = massagePath(variable)
-        # get metadata for variable
-        promise = self.readDatasets([variable], block=True, earlyExit=True, metaOnly=True, enableAttributes=False)
-        metadata = promise.datasets[variable].meta
-        # if attributes request
+        metadata = None
         attributes = {}
+
         if w_attr:
-            # list attributes associated with variable
+            # get metadata and attributes associated with variable
             _, attrs = self.listGroup(variable, w_attr)
-            attr_paths = [f'{variable}/{attr}' for attr in attrs]
+            if variable in self.metadataTable:
+                metadata = self.metadataTable[variable]
             # read each attribute
+            attr_paths = [f'{variable}/{attr}' for attr in attrs]
             promise = self.readDatasets(attr_paths, enableAttributes=True)
             for attr in attrs:
                 attributes[attr] = promise.datasets[f'{variable}/{attr}'].values
-
+        else:
+            # get metadata for variable
+            promise = self.readDatasets([variable], block=True, earlyExit=True, metaOnly=True, enableAttributes=False)
+            metadata = promise.datasets[variable].meta
+ 
         # return results
         return metadata, attributes
 
