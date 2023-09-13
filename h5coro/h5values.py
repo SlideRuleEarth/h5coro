@@ -36,25 +36,25 @@ class H5Values:
     #######################
     # Constructor
     #######################
-    def __init__(self, _elements, _datasize, _numrows, _numcols, _datatype, _values):
+    def __init__(self, _elements, _datasize, _numrows, _numcols, _datatype, _data):
         self.elements   = _elements
         self.datasize   = _datasize
         self.numrows    = _numrows
         self.numcols    = _numcols
         self.datatype   = _datatype
-        self.values     = _values
+        self.data       = _data
 
     #######################
     # operator: []
     #######################
     def __getitem__(self, key):
-        return self.values[key]
+        return self.data[key]
 
     #######################
     # length
     #######################
     def __len__(self):
-        return len(self.values)
+        return len(self.data)
 
     #######################
     # representation
@@ -72,4 +72,4 @@ class H5Values:
     # tolist
     #######################
     def tolist(self):
-        return list(self.values)
+        return list(self.data)

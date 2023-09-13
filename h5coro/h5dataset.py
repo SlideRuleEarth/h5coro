@@ -292,35 +292,15 @@ class H5Dataset:
             elif self.resourceObject.errorChecking:
                 raise FatalError(f'invalid data layout: {self.meta.layout}')
 
-        try:
-            # set dimensions
-            numcols = 0
-            if self.meta.ndims == 0:
-                numcols = 0
-            elif self.meta.ndims == 1:
-                numcols = 1
-            elif self.meta.ndims >= 2:
-                numcols = self.meta.dimensions[1]
+        # populate data
+        if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
             elements = int(buffer_size / self.meta.typeSize)
-
-            # populate values
-            if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
-                datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
-                values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
-            elif self.meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
-                raise FatalError(f'variable length data types require reading a global heap, which is not yet supported')
-            else:
-                datatype = str
-                values = ctypes.create_string_buffer(buffer).value.decode('ascii')
-            # fulfill h5 future
-            self.values = H5Values(elements,
-                                   buffer_size,
-                                   self.datasetNumRows,
-                                   numcols,
-                                   datatype,
-                                   values)
-        except Exception as e:
-            raise FatalError(f'unable to populate datasets for {self.resourceObject.resource}/{self.dataset}: {e}')
+            datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
+            self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
+        elif self.meta.type == H5Metadata.STRING_TYPE:
+            self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
+        elif self.resourceObject.verbose:
+            logger.error(f'unsupported data type {self.meta.type}: unable to populate values')
 
     #######################
     # readField
