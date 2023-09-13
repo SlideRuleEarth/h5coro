@@ -28,7 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from h5coro.h5dataset import H5Dataset
-from h5coro.h5promise import H5Promise
+from h5coro.h5promise import H5Promise, massagePath
 import concurrent.futures
 import logging
 import sys
@@ -78,13 +78,6 @@ def isolateElement(path, group):
             element = element.split('/')[0]
             return element
     return None
-
-def massagePath(path):
-    if path[0] == '/':
-        path = path[1:]
-    if path[-1] == '/':
-        path = path[:-1]
-    return path
 
 ###############################################################################
 # H5Coro Class

@@ -39,7 +39,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 ###############################################################################
-# Thread Functions
+# Local Functions
 ###############################################################################
 
 def datasetThread(resourceObject, dataset, startRow=0, numRows=H5Dataset.ALL_ROWS, *, earlyExit, metaOnly, enableAttributes):
@@ -56,6 +56,13 @@ def resultThread(promise, futures):
         promise.datasets[h5dataset.dataset] = h5dataset
         promise.conditions[h5dataset.dataset].notify()
         promise.conditions[h5dataset.dataset].release()
+
+def massagePath(path):
+    if len(path) > 0 and path[0] == '/':
+        path = path[1:]
+    if len(path) > 0 and path[-1] == '/':
+        path = path[:-1]
+    return path
 
 ###############################################################################
 # H5Promise Class
@@ -88,19 +95,17 @@ class H5Promise:
     # waitOnResult
     #######################
     def waitOnResult(self, dataset, timeout=None):
-        if dataset in self.conditions:
-            self.conditions[dataset].acquire()
-            while self.datasets[dataset] == None:
-                self.conditions[dataset].wait(timeout=timeout)
-            self.conditions[dataset].release()
-            return True
-        else:
-            return False
+        self.conditions[dataset].acquire()
+        if self.datasets[dataset] == None:
+            self.conditions[dataset].wait(timeout=timeout)
+        self.conditions[dataset].release()
+        return self.datasets[dataset] == None
 
     #######################
     # operator: []
     #######################
     def __getitem__(self, key):
+        key = massagePath(key)
         self.waitOnResult(key)
         return self.datasets[key].values
 
@@ -112,7 +117,7 @@ class H5Promise:
         total_count = len(self.keys())
         count = 1
         for dataset in self.keys():
-            separator = count == total_count and ' ' or ','
+            separator = count == total_count and ' ' or ', '
             rstr += f'"{dataset}": {self.datasets[dataset]}{separator}'
             count += 1
         rstr += '}'
