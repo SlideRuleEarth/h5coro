@@ -28,3 +28,10 @@ class TestIcesat2:
         metadata, attributes = h5obj.inspectVariable('gt2l/heights/h_ph', w_attr=True)
         assert metadata.dimensions[0] == 20622551
         assert attributes['units'] == 'meters'
+
+    def test_slash(self):
+        h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
+        promise = h5obj.readDatasets(['gt1l/geolocation/reference_photon_index'], block=True, enableAttributes=False)
+        assert promise['gt1l/geolocation/reference_photon_index'][0] == 28
+        promise = h5obj.readDatasets(['/gt1l/geolocation/reference_photon_index'], block=True, enableAttributes=False)
+        assert promise['/gt1l/geolocation/reference_photon_index'][0] == 28
