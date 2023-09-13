@@ -28,7 +28,6 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from h5coro.h5metadata import H5Metadata
-from h5coro.h5values import H5Values
 from datetime import datetime
 import struct
 import logging

@@ -135,10 +135,11 @@ class H5Coro:
         # make into dictionary
         datasetTable = {}
         for dataset in datasets:
-            dataset = massagePath(dataset)
             if type(dataset) == str:
+                dataset = massagePath(dataset)
                 datasetTable[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
             else:
+                dataset["dataset"] = massagePath(dataset["dataset"])
                 datasetTable[dataset["dataset"]] = dataset
 
         # return promise
