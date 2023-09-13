@@ -806,7 +806,7 @@ class H5Dataset:
                         2: "H5R_OBJECT2",
                         3: "H5R_DATASET_REGION2",
                         4: "H5R_ATTR"
-                    }
+                    }[ref_type]
                 except:
                     if self.resourceObject.errorChecking:
                         raise FatalError(f'unrecognized reference type: {ref_type}')
@@ -839,16 +839,17 @@ class H5Dataset:
                 elif charset == 1:
                     charset_str = "UTF-8"
 
-                # Save Off
-                vlen_type_size  = meta.typeSize
-                vlen_type       = meta.type
-                vlen_signedval  = meta.signedval
-                
-                self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
-
                 logger.info(f'Variable Type:        {vl_type_str}')
                 logger.info(f'Padding Type:         {padding_str}')
                 logger.info(f'Character Set:        {charset_str}')
+
+            # save off
+            vlen_type_size  = meta.typeSize
+            vlen_type       = meta.type
+            vlen_signedval  = meta.signedval
+            
+            # recursively call datatype message
+            self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
         # String
         elif meta.type == H5Metadata.STRING_TYPE:
             meta.signedval = True
