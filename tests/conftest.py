@@ -1,7 +1,7 @@
 import pytest
 
 def pytest_addoption(parser):
-    parser.addoption("--daac", action="store", default="nsidc")
+    parser.addoption("--daac", action="store", default="NSIDC")
 
 @pytest.fixture(scope='session')
 def daac(request):

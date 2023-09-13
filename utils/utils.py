@@ -6,7 +6,8 @@ import logging
 
 # Command Line Arguments #
 parser = argparse.ArgumentParser(description="""Deep inspection of a subgroup""")
-parser.add_argument('--granule','-f', type=str, default="nsidc-cumulus-prod-protected/ATLAS/ATL03/006/2019/11/30/ATL03_20191130112041_09860505_006_01.h5")
+#parser.add_argument('--granule','-f', type=str, default="nsidc-cumulus-prod-protected/ATLAS/ATL03/006/2019/11/30/ATL03_20191130112041_09860505_006_01.h5")
+parser.add_argument('--granule','-f', type=str, default="nsidc-cumulus-prod-protected/ATLAS/ATL03/006/2018/10/17/ATL03_20181017222812_02950102_006_02.h5")
 parser.add_argument('--variables','-x', nargs='+', type=str, default=["/gt2l/heights/h_ph"])
 parser.add_argument('--group','-g', nargs='+', type=str, default="/gt2l/heights")
 parser.add_argument('--slice','-s', nargs=2, type=int, default=[0,10])

@@ -128,7 +128,7 @@ class H5Dataset:
         self.dataChunkBufferSize    = 0
         self.meta                   = H5Metadata()
         self.values                 = None
-        
+
         # check for null dataset
         # (to handle datasets that error out and cannot be read)
         if makeNull:
@@ -793,18 +793,37 @@ class H5Dataset:
                 logger.info(f'Exponent Bias:        {exp_bias}')
             else:
                 self.pos += 12
+        # Reference
+        elif meta.type == H5Metadata.REFERENCE_TYPE:
+            meta.signedval = True
+            if self.resourceObject.verbose:
+                ref_type = databits & 0xF
+                ref_ver  = (databits >> 4) & 0xF
+                try:
+                    ref_str  = {
+                        0: "H5R_OBJECT1",
+                        1: "H5R_DATASET_REGION1",
+                        2: "H5R_OBJECT2",
+                        3: "H5R_DATASET_REGION2",
+                        4: "H5R_ATTR"
+                    }
+                except:
+                    if self.resourceObject.errorChecking:
+                        raise FatalError(f'unrecognized reference type: {ref_type}')
+                    ref_str = "unrecognized"
+                logger.info(f'Reference Type:       {ref_str}')
         # Variable Length
         elif meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
             if self.resourceObject.verbose:
-                vt_type = databits & 0xF # variable length type
+                vl_type = databits & 0xF # variable length type
                 padding = (databits & 0xF0) >> 4
                 charset = (databits & 0xF00) >> 8
-
-                vt_type_str = "unknown"
-                if vt_type == 0:
-                    vt_type_str = "Sequence"
-                elif vt_type == 1:
-                    vt_type_str = "String"
+                
+                vl_type_str = "unknown"
+                if vl_type == 0:
+                    vl_type_str = "Sequence"
+                elif vl_type == 1:
+                    vl_type_str = "String"
 
                 padding_str = "unknown"
                 if padding == 0:
@@ -820,7 +839,14 @@ class H5Dataset:
                 elif charset == 1:
                     charset_str = "UTF-8"
 
-                logger.info(f'Variable Type:        {vt_type_str}')
+                # Save Off
+                vlen_type_size  = meta.typeSize
+                vlen_type       = meta.type
+                vlen_signedval  = meta.signedval
+                
+                self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
+
+                logger.info(f'Variable Type:        {vl_type_str}')
                 logger.info(f'Padding Type:         {padding_str}')
                 logger.info(f'Character Set:        {charset_str}')
         # String
