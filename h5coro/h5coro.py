@@ -88,10 +88,10 @@ class H5Coro:
     #######################
     # Constructor
     #######################
-    def __init__(self, 
-        resource, 
-        driver_class, 
-        credentials={}, 
+    def __init__(self,
+        resource,
+        driver_class,
+        credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         enablePrefetch = ENABLE_PREFETCH_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,

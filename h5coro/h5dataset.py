@@ -320,7 +320,7 @@ class H5Dataset:
     #######################
     # readSuperblock
     #
-    #   Note: this is NOT a class method as it takes a 'resourceObject' 
+    #   Note: this is NOT a class method as it takes a 'resourceObject'
     #   and populates critical attributes of that object; this should
     #   be called in h5coro and passed the self member
     #######################
