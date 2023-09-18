@@ -28,7 +28,6 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from h5coro.h5metadata import H5Metadata
-from h5coro.h5values import H5Values
 from datetime import datetime
 import struct
 import logging
@@ -118,6 +117,7 @@ class H5Dataset:
         self.metaOnly               = metaOnly
         self.enableAttributes       = enableAttributes
         self.pos                    = self.resourceObject.rootAddress
+        self.currObjHdrPos          = 0
         self.dataset                = dataset
         self.datasetStartRow        = startRow
         self.datasetNumRows         = numRows
@@ -137,9 +137,8 @@ class H5Dataset:
         dataset_level = 0
 
         # get metadata for dataset
-        if self.dataset in self.resourceObject.metadataTable:
+        if self.dataset in self.resourceObject.metadataTable:            
             self.meta = self.resourceObject.metadataTable[self.dataset]
-
         # metadata not available
         if self.meta.typeSize == 0 or not earlyExit:
             # traverse file for dataset
@@ -292,33 +291,15 @@ class H5Dataset:
             elif self.resourceObject.errorChecking:
                 raise FatalError(f'invalid data layout: {self.meta.layout}')
 
-        try:
-            # set dimensions
-            numcols = 0
-            if self.meta.ndims == 0:
-                numcols = 0
-            elif self.meta.ndims == 1:
-                numcols = 1
-            elif self.meta.ndims >= 2:
-                numcols = self.meta.dimensions[1]
+        # populate data
+        if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
             elements = int(buffer_size / self.meta.typeSize)
-
-            # populate values
-            if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
-                datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
-                values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
-            else:
-                datatype = str
-                values = ctypes.create_string_buffer(buffer).value.decode('ascii')
-            # fulfill h5 future
-            self.values = H5Values(elements,
-                                   buffer_size,
-                                   self.datasetNumRows,
-                                   numcols,
-                                   datatype,
-                                   values)
-        except Exception as e:
-            raise FatalError(f'unable to populate datasets for {self.resourceObject.resource}/{self.dataset}: {e}')
+            datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
+            self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
+        elif self.meta.type == H5Metadata.STRING_TYPE:
+            self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
+        elif self.resourceObject.verbose:
+            logger.error(f'unsupported data type {self.meta.type}: unable to populate values')
 
     #######################
     # readField
@@ -415,13 +396,14 @@ class H5Dataset:
         # check mata data table
         for lvl in range(self.datasetPathLevels, dlvl, -1):
             group_path = '/'.join(self.datasetPath[:lvl])
-            if group_path in self.resourceObject.metadataTable:
-                self.pos = self.resourceObject.metadataTable[group_path].address
-                self.resourceObject.metaDataHits += 1
+            if group_path in self.resourceObject.pathAddresses:                
+                self.pos = self.resourceObject.pathAddresses[group_path]
                 dlvl = lvl
+                break
         # process header
+        self.currObjHdrPos = self.pos
         version_peek = self.readField(1)
-        self.pos -= 1
+        self.pos = self.currObjHdrPos
         if version_peek == 1:
             self.readObjHdrV1(dlvl)
         else:
@@ -628,7 +610,10 @@ class H5Dataset:
     #######################
     # dataspaceMsgHandler
     #######################
-    def dataspaceMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
+    def dataspaceMsgHandler(self, msg_size, obj_hdr_flags, dlvl, meta=None):
+        if meta == None:
+            meta = self.meta
+
         MAX_DIM_PRESENT    = 0x1
         PERM_INDEX_PRESENT = 0x2
         starting_position  = self.pos
@@ -653,12 +638,12 @@ class H5Dataset:
                 raise FatalError(f'unsupported number of dimensions: {dimensionality}')
 
         # read and populate data dimensions
-        self.meta.dimensions = []
-        self.meta.ndims = min(dimensionality, self.MAX_NDIMS)
-        if self.meta.ndims > 0:
-            for x in range(self.meta.ndims):
+        meta.dimensions = []
+        meta.ndims = min(dimensionality, self.MAX_NDIMS)
+        if meta.ndims > 0:
+            for x in range(meta.ndims):
                 dimension = self.readField(self.resourceObject.lengthSize)
-                self.meta.dimensions.append(dimension)
+                meta.dimensions.append(dimension)
                 if self.resourceObject.verbose:
                     logger.info(f'Dimension {x}:          {dimension}')
 
@@ -722,29 +707,32 @@ class H5Dataset:
     #######################
     # datatypeMsgHandler
     #######################
-    def datatypeMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
-        starting_position           = self.pos
-        version_class               = self.readField(4)
-        self.meta.typeSize          = self.readField(4)
-        version                     = (version_class & 0xF0) >> 4
-        databits                    = version_class >> 8
-        self.meta.type              = version_class & 0x0F
-        self.meta.signedval         = ((databits & 0x08) >> 3) == 1
+    def datatypeMsgHandler(self, msg_size, obj_hdr_flags, dlvl, meta=None):
+        if meta == None:
+            meta = self.meta
+
+        starting_position   = self.pos
+        version_class       = self.readField(4)
+        meta.typeSize       = self.readField(4)
+        version             = (version_class & 0xF0) >> 4
+        databits            = version_class >> 8
+        meta.type           = version_class & 0x0F
+        meta.signedval      = ((databits & 0x08) >> 3) == 1
 
         # display
         if self.resourceObject.verbose:
             logger.info(f'<<Data Type Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             logger.info(f'Version:              {version}')
-            logger.info(f'Type Size:            {self.meta.typeSize}')
-            logger.info(f'Data Type:            {self.meta.type}')
-            logger.info(f'Signed:               {self.meta.signedval}')
+            logger.info(f'Type Size:            {meta.typeSize}')
+            logger.info(f'Data Type:            {meta.type}')
+            logger.info(f'Signed:               {meta.signedval}')
 
         # check version
         if self.resourceObject.errorChecking and version != 1:
             raise FatalError(f'unsupported datatype version: {version}')
 
         # Fixed Point
-        if self.meta.type == H5Metadata.FIXED_POINT_TYPE:
+        if meta.type == H5Metadata.FIXED_POINT_TYPE:
             if self.resourceObject.verbose:
                 byte_order      = databits & 0x1
                 pad_type        = (databits & 0x06) >> 1
@@ -757,8 +745,8 @@ class H5Dataset:
             else:
                 self.pos += 4
         # Floating Point
-        elif self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
-            self.meta.signedval = True
+        elif meta.type == H5Metadata.FLOATING_POINT_TYPE:
+            meta.signedval = True
             if self.resourceObject.verbose:
                 byte_order      = ((databits & 0x40) >> 5) | (databits & 0x1)
                 pad_type        = (databits & 0x0E) >> 1
@@ -784,18 +772,37 @@ class H5Dataset:
                 logger.info(f'Exponent Bias:        {exp_bias}')
             else:
                 self.pos += 12
-        # Variable Length
-        elif self.meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
+        # Reference
+        elif meta.type == H5Metadata.REFERENCE_TYPE:
+            meta.signedval = True
             if self.resourceObject.verbose:
-                vt_type = databits & 0xF # variable length type
+                ref_type = databits & 0xF
+                ref_ver  = (databits >> 4) & 0xF
+                try:
+                    ref_str  = {
+                        0: "H5R_OBJECT1",
+                        1: "H5R_DATASET_REGION1",
+                        2: "H5R_OBJECT2",
+                        3: "H5R_DATASET_REGION2",
+                        4: "H5R_ATTR"
+                    }[ref_type]
+                except:
+                    if self.resourceObject.errorChecking:
+                        raise FatalError(f'unrecognized reference type: {ref_type}')
+                    ref_str = "unrecognized"
+                logger.info(f'Reference Type:       {ref_str}')
+        # Variable Length
+        elif meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
+            if self.resourceObject.verbose:
+                vl_type = databits & 0xF # variable length type
                 padding = (databits & 0xF0) >> 4
                 charset = (databits & 0xF00) >> 8
-
-                vt_type_str = "unknown"
-                if vt_type == 0:
-                    vt_type_str = "Sequence"
-                elif vt_type == 1:
-                    vt_type_str = "String"
+                
+                vl_type_str = "unknown"
+                if vl_type == 0:
+                    vl_type_str = "Sequence"
+                elif vl_type == 1:
+                    vl_type_str = "String"
 
                 padding_str = "unknown"
                 if padding == 0:
@@ -811,16 +818,20 @@ class H5Dataset:
                 elif charset == 1:
                     charset_str = "UTF-8"
 
-                logger.info(f'Variable Type:        {vt_type_str}')
+                logger.info(f'Variable Type:        {vl_type_str}')
                 logger.info(f'Padding Type:         {padding_str}')
                 logger.info(f'Character Set:        {charset_str}')
 
-            # unsupported
-            raise FatalError(f'variable length data types require reading a global heap, which is not yet supported')
-            # self.pos += self.datatypeMsgHandler(msg_size, obj_hdr_flags)
+            # save off
+            vlen_type_size  = meta.typeSize
+            vlen_type       = meta.type
+            vlen_signedval  = meta.signedval
+            
+            # recursively call datatype message
+            self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
         # String
-        elif self.meta.type == H5Metadata.STRING_TYPE:
-            self.meta.signedval = True
+        elif meta.type == H5Metadata.STRING_TYPE:
+            meta.signedval = True
             if self.resourceObject.verbose:
                 padding = databits & 0x0F
                 charset = (databits & 0xF0) >> 4
@@ -843,7 +854,7 @@ class H5Dataset:
                 logger.info(f'Character Set:        {charset_str}')
         # Default
         elif self.resourceObject.errorChecking:
-            raise FatalError(f'unsupported datatype: {self.meta.type}')
+            raise FatalError(f'unsupported datatype: {meta.type}')
 
         # return bytes read
         return self.pos - starting_position
@@ -964,7 +975,7 @@ class H5Dataset:
                 logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             # update meta data table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
+            self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
             # follow link
             if follow_link:
                 return_position = self.pos
@@ -1164,49 +1175,44 @@ class H5Dataset:
             logger.info(f'Datatype Size:        {datatype_size}')
             logger.info(f'Dataspace Size:       {dataspace_size}')
 
+        # initialize local meta structure
+        meta = H5Metadata()
+
+        # read datatype message
+        datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl, meta)
+        pad_bytes = (PAD_SIZE - (datatype_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
+        if self.resourceObject.errorChecking and ((datatype_bytes_read + pad_bytes) != datatype_size):
+            raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
+        self.pos += pad_bytes
+
+        # read dataspace message
+        dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl, meta)
+        pad_bytes = (PAD_SIZE - (dataspace_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
+        if self.resourceObject.errorChecking and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
+            raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
+        self.pos += pad_bytes
+
+        # set meta data
+        meta.isattribute = True
+        meta.layout = self.CONTIGUOUS_LAYOUT
+        for f in meta.filter.keys():
+            meta.filter[f] = False
+        meta.address = self.pos
+        meta.size = msg_size - (self.pos - starting_position)
+        self.resourceObject.metadataTable[attr_path] = meta
+        self.resourceObject.pathAddresses[attr_path] = self.currObjHdrPos
+
+        # move to end of data
+        self.pos += meta.size
+
         # check if desired attribute
         if( ((dlvl + 1) == len(self.datasetPath)) and
             (attr_name == self.datasetPath[dlvl]) ):
             self.datasetFound = True
-            self.meta.isattribute = True
+            self.meta = meta
 
-            # read datatype message
-            datatype_bytes_read = self.datatypeMsgHandler(datatype_size, obj_hdr_flags, dlvl)
-            pad_bytes = (PAD_SIZE - (datatype_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
-            if self.resourceObject.errorChecking and ((datatype_bytes_read + pad_bytes) != datatype_size):
-                raise FatalError(f'failed to read expected bytes for datatype message: {datatype_bytes_read + pad_bytes} != {datatype_size}')
-            self.pos += pad_bytes
-
-            # read dataspace message
-            dataspace_bytes_read = self.dataspaceMsgHandler(dataspace_size, obj_hdr_flags, dlvl)
-            pad_bytes = (PAD_SIZE - (dataspace_bytes_read % PAD_SIZE)) % PAD_SIZE # align to next x-byte boundary
-            if self.resourceObject.errorChecking and ((dataspace_bytes_read + pad_bytes) != dataspace_size):
-                raise FatalError(f'failed to read expected bytes for dataspace message: {dataspace_bytes_read + pad_bytes} != {dataspace_size}')
-            self.pos += pad_bytes
-
-            # set meta data
-            self.meta.layout = self.CONTIGUOUS_LAYOUT
-            for f in self.meta.filter.keys():
-                self.meta.filter[f] = False
-            self.meta.address = self.pos
-            self.meta.size = msg_size - (self.pos - starting_position)
-
-            # move to end of data
-            self.pos += self.meta.size
-
-            # update metadata table
-            self.resourceObject.metadataTable[attr_path] = self.meta
-
-            # return bytes read
-            return self.pos - starting_position
-        else:
-            # update metadata table
-            self.resourceObject.metadataTable[attr_path] = H5Metadata(self.pos + datatype_size + dataspace_size)
-            self.resourceObject.metadataTable[attr_path].isattribute = True
-
-            # skip processing message
-            self.pos = starting_position + msg_size
-            return msg_size
+        # return bytes read
+        return self.pos - starting_position
 
     #######################
     # headercontMsgHandler
@@ -1448,9 +1454,9 @@ class H5Dataset:
                 logger.info(f'Link Name:            {link_name}')
                 logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
 
-            # update meta data table
+            # update path address table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
-            self.resourceObject.metadataTable[group_path] = H5Metadata(obj_hdr_addr)
+            self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
 
             # process link
             return_position = self.pos

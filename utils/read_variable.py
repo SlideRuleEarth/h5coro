@@ -27,42 +27,10 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
-import argparse
 import h5coro
-from h5coro import s3driver, filedriver
+from utils import args, credentials
 
-###############################################################################
-# COMMAND LINE ARGUMENTS
-###############################################################################
-
-parser = argparse.ArgumentParser(description="""Read variable from granule""")
-parser.add_argument('--granule','-g', type=str, default="sliderule/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
-parser.add_argument('--variables','-x', nargs='+', type=str, default=["/gt2l/heights/h_ph"])
-parser.add_argument('--profile','-p', type=str, default="default")
-parser.add_argument('--driver','-d', type=str, default="s3") # s3 or file
-parser.add_argument('--checkErrors','-e', action='store_true', default=False)
-parser.add_argument('--verbose','-v', action='store_true', default=False)
-parser.add_argument('--enableAttributes','-a', action='store_true', default=False)
-parser.add_argument('--slice','-s', nargs=2, type=int, default=[0,10])
-args,_ = parser.parse_known_args()
-
-if args.driver == "file":
-    args.driver = filedriver.FileDriver
-elif args.driver == "s3":
-    args.driver = s3driver.S3Driver
-else:
-    args.driver = None
-
-###############################################################################
-# MAIN
-###############################################################################
-
-try:
-    h5coro.config(logLevel=logging.INFO)
-    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials={"profile":args.profile})
-    promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
-    for variable in promise:
-        print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
-except Exception as e:
-    print(f'{e.__class__.__name__}: {e}')
+h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
+promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
+for variable in promise:
+    print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')

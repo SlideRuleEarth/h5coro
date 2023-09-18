@@ -27,49 +27,74 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from h5coro.h5promise import massagePath
+
 ###############################################################################
-# H5Values Class
+# H5View Class
 ###############################################################################
 
-class H5Values:
+class H5View:
 
     #######################
     # Constructor
     #######################
-    def __init__(self, _elements, _datasize, _numrows, _numcols, _datatype, _values):
-        self.elements   = _elements
-        self.datasize   = _datasize
-        self.numrows    = _numrows
-        self.numcols    = _numcols
-        self.datatype   = _datatype
-        self.values     = _values
+    def __init__(self, promise, path=""):
+        self.promise = promise
+        self.path = massagePath(path)
+        self.datasets = {}
+        for dataset in promise.datasets:
+            if dataset.startswith(self.path):
+                subpath = massagePath(dataset[len(self.path):])
+                if len(subpath) > 0:
+                    element = list(filter(('').__ne__, subpath.split('/')))[0]
+                    if element not in self.datasets:
+                        newpath = self.path + "/" + element
+                        self.datasets[element] = H5View(promise, path=newpath)
 
     #######################
     # operator: []
     #######################
     def __getitem__(self, key):
-        return self.values[key]
-
-    #######################
-    # length
-    #######################
-    def __len__(self):
-        return len(self.values)
+        key = massagePath(key)
+        fullpath = self.path + "/" + key
+        if fullpath in self.promise.datasets:
+            return self.promise[fullpath]
+        else:
+            return self.datasets[key]
 
     #######################
     # representation
     #######################
     def __repr__(self):
-        return f'{{"elements": {self.elements}, "datasize": {self.datasize}, "numrows": {self.numrows}, "numcols": {self.numcols}, "datatype": {self.datatype}, "values": {self.values}}}'
+        repr = []
+        self.display(self, 0, repr)
+        return ''.join(repr)
 
     #######################
-    # print
+    # string
     #######################
     def __str__(self):
         return self.__repr__()
 
     #######################
-    # tolist
+    # iterate
     #######################
-    def tolist(self):
-        return list(self.values)
+    def __iter__(self):
+        for key in self.datasets.keys():
+            yield key
+
+    #######################
+    # keys
+    #######################
+    def keys(self):
+        return self.datasets.keys()
+
+    #######################
+    # display
+    #######################
+    def display(self, view, lvl, repr):
+        space = '    '*lvl
+        for key in view.keys():
+            repr.append(f'{space}{key}\n')
+            if type(view[key]) == H5View:
+                self.display(view[key], lvl+1, repr)

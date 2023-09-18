@@ -37,6 +37,12 @@ class S3Driver:
             self.session = boto3.Session(aws_access_key_id=credentials["aws_access_key_id"],
                                          aws_secret_access_key=credentials["aws_secret_access_key"],
                                          aws_session_token=credentials["aws_session_token"])
+        elif "accessKeyId" in credentials and \
+             "secretAccessKey" in credentials and \
+             "sessionToken" in credentials:
+            self.session = boto3.Session(aws_access_key_id=credentials["accessKeyId"],
+                                         aws_secret_access_key=credentials["secretAccessKey"],
+                                         aws_session_token=credentials["sessionToken"])
         elif len(credentials) == 0:
             self.session = boto3.Session()
         else:
