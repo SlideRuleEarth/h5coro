@@ -3,11 +3,10 @@ name: h5coro
 channels:
   - conda-forge
 dependencies:
-  - python
-  - pip
   - pytest
   - numpy
   - boto3
   - s3fs
   - h5py
   - sliderule
+  - earthaccess>=0.5.3

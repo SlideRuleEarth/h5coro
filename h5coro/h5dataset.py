@@ -127,7 +127,7 @@ class H5Dataset:
         self.dataChunkBufferSize    = 0
         self.meta                   = H5Metadata()
         self.values                 = None
-        
+
         # check for null dataset
         # (to handle datasets that error out and cannot be read)
         if makeNull:
@@ -339,7 +339,7 @@ class H5Dataset:
     #######################
     # readSuperblock
     #
-    #   Note: this is NOT a class method as it takes a 'resourceObject' 
+    #   Note: this is NOT a class method as it takes a 'resourceObject'
     #   and populates critical attributes of that object; this should
     #   be called in h5coro and passed the self member
     #######################
