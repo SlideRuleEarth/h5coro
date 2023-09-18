@@ -27,10 +27,10 @@ class HTTPDriver:
 
         # construct path to resource
         self.resource = resource
+        self.session = requests.Session()
         if type(credentials) is str:
-            self.session = requests.Session(headers={"Authorization": f"Bearer: {credentials}"})
-        else:
-            self.session = requests.Session()
+            self.token = credentials
+            self.session.headers.update({"Authorization": f"Bearer {self.token}"})
 
     #######################
     # read
@@ -41,5 +41,6 @@ class HTTPDriver:
         if stream.status_code > 200 and stream.status_code < 400:
             return stream.content
         else:
+            print(stream, stream.request.headers)
             raise FatalError
 
