@@ -2,13 +2,28 @@
 
 import pytest
 import h5coro
-from h5coro import filedriver, s3driver
+import os
+
+
+from h5coro import filedriver, s3driver, webdriver
 
 ATL03_S3_OBJECT = "sliderule/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5"
 ATL03_FILE = "/data/ATLAS/ATL03_20181017222812_02950102_005_01.h5"
+ATL03_HTTP_URL = "https://data.nsidc.earthdatacloud.nasa.gov/nsidc-cumulus-prod-protected/ATLAS/ATL06/006/2018/10/14/ATL06_20181014001049_02350102_006_02.h5"
+
+
 
 @pytest.mark.region
 class TestIcesat2:
+
+    def test_http_driver(self):
+        edl_token = os.environ.get("EDL_TOKEN")
+
+        h5obj = h5coro.H5Coro(ATL03_HTTP_URL, webdriver.HTTPDriver, credentials=edl_token)
+        promise = h5obj.readDatasets(['/gt1r/land_ice_segments/h_li'], block=True)
+        assert promise['/gt1r/land_ice_segments/h_li'].elements > 0
+        assert promise['/gt1r/land_ice_segments/h_li'].numcols == 1
+
     def test_s3driver(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver)
         promise = h5obj.readDatasets(['/gt2l/heights/h_ph'])

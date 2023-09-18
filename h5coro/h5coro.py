@@ -78,10 +78,10 @@ class H5Coro:
     #######################
     # Constructor
     #######################
-    def __init__(self, 
-        resource, 
-        driver_class, 
-        credentials={}, 
+    def __init__(self,
+        resource,
+        driver_class,
+        credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         enablePrefetch = ENABLE_PREFETCH_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
@@ -161,14 +161,14 @@ class H5Coro:
 
             # read elements in group
             H5Dataset(self, group, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
-    
+
             # massage group name to remove leading and trailing slashes
             if group[0] == '/':
                 group = group[1:]
             if group[-1] == '/':
                 group = group[:-1]
 
-            # populate variables and attributes by filtering metadataTable 
+            # populate variables and attributes by filtering metadataTable
             # for all entries starting with group string
             paths = self.metadataTable.keys()
             for path in paths:
