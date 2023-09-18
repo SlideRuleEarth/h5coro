@@ -24,7 +24,14 @@ class HTTPDriver:
     # Constructor
     #######################
     def __init__(self, resource, credentials):
+        """HTTP driver for H5Coro
 
+        Parameters:
+            resource (String): HTTP URL pointing to a NASA file
+            credentials (String): EDL token
+        Returns:
+            class HTTPDriver: reader that can access NASA data out of us-west-2
+        """
         # construct path to resource
         self.resource = resource
         self.session = requests.Session()
