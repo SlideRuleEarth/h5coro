@@ -16,11 +16,10 @@ ATL03_HTTP_URL = "https://data.nsidc.earthdatacloud.nasa.gov/nsidc-cumulus-prod-
 class TestIcesat2:
 
     def test_http_driver(self):
-        edl_token = os.environ.get("EDL_TOKEN")
+        edl_token = auth.token["access_token"] 
         h5obj = h5coro.H5Coro(ATL03_HTTP_URL, webdriver.HTTPDriver, credentials=edl_token)
         promise = h5obj.readDatasets(['/gt1r/land_ice_segments/h_li'], block=True)
-        assert promise['/gt1r/land_ice_segments/h_li'].elements > 0
-        assert promise['/gt1r/land_ice_segments/h_li'].numcols == 1
+        assert len(promise['/gt1r/land_ice_segments/h_li']) == 3880
 
     def test_s3driver(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
