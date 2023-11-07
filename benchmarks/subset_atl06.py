@@ -55,7 +55,7 @@ def subsetted_read(profiler, region, variable):
     # Build list of each lat,lon dataset to read
     geodatasets = []
     for track in tracks:
-        prefix = "/gt"+track+"/land_ice_segments/"
+        prefix = "gt"+track+"/land_ice_segments/"
         geodatasets.append({"dataset": prefix+"latitude", "startrow": 0, "numrows": -1})
         geodatasets.append({"dataset": prefix+"longitude", "startrow": 0, "numrows": -1})
 
@@ -65,7 +65,7 @@ def subsetted_read(profiler, region, variable):
     # Build list of the subsetted variable datasets to read
     datasets = []
     for track in tracks:
-        prefix = "/gt"+track+"/land_ice_segments/"
+        prefix = "gt"+track+"/land_ice_segments/"
         lat_dataset = geocoords[prefix+"latitude"]
         lon_dataset = geocoords[prefix+"longitude"]
         startrow = -1

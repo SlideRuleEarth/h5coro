@@ -54,7 +54,7 @@ def subsetted_read(profiler, region, variable, tracks = ["1l", "1r", "2l", "2r",
     # Build list of each lat,lon dataset to read
     geodatasets = []
     for track in tracks:
-        prefix = "/gt"+track+"/geolocation/"
+        prefix = "gt"+track+"/geolocation/"
         geodatasets.append({"dataset": prefix+"reference_photon_lat", "startrow": 0, "numrows": -1})
         geodatasets.append({"dataset": prefix+"reference_photon_lon", "startrow": 0, "numrows": -1})
         geodatasets.append({"dataset": prefix+"segment_ph_cnt", "startrow": 0, "numrows": -1})
@@ -65,8 +65,8 @@ def subsetted_read(profiler, region, variable, tracks = ["1l", "1r", "2l", "2r",
     # Build list of the subsetted variable datasets to read
     datasets = []
     for track in tracks:
-        geoprefix = "/gt"+track+"/geolocation/"
-        prefix = "/gt"+track+"/heights/"
+        geoprefix = "gt"+track+"/geolocation/"
+        prefix = "gt"+track+"/heights/"
         lat_dataset = geocoords[geoprefix+"reference_photon_lat"]
         lon_dataset = geocoords[geoprefix+"reference_photon_lon"]
         cnt_dataset = geocoords[geoprefix+"segment_ph_cnt"]
