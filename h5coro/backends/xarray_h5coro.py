@@ -1,5 +1,6 @@
 import logging
 import re
+import warnings
 
 from xarray.backends import BackendEntrypoint
 from h5coro import h5coro, s3driver, filedriver
@@ -58,7 +59,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         coordinate_names = []
         for variable, results in variables.items():
             # pull out data
-            print('------ PROCESSING VARIABLE -----', variable)
+            # print('------ PROCESSING VARIABLE -----', variable)
             var_data = h5obj.readDatasets(datasets=[variable[1:]], block=True)
             
             # pull out metadata
@@ -67,7 +68,9 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             # check dimensionality and build dataarray dictionary with relevant variables
             if results['metadata'].ndims and results['metadata'].ndims > 1:
                 # ignore the 2d variable
-                # TODO raise warning here
+                warnings.warn((f'Variable {variable} has more than 1 dimension. Reading variables with'
+                               'more than 1 dimension is not currently supported. This variable will be'
+                               'dropped.'))
                 continue
             else:
                 # build the coordinate list
@@ -75,10 +78,10 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                     coord = results['attributes'][os.path.join(variable, 'coordinates')].values
                     coord = re.split(';|,| |\n', coord)
                     coord = [c for c in coord if c]
-                    print('COORD', coord)
+                    # print('COORD', coord)
                     for c in coord:
                         if not os.path.join(group, c) in coordinate_names:
-                            print('appending ', os.path.join(group, c))
+                            # print('appending ', os.path.join(group, c))
                             coordinate_names.append(os.path.join(group, c))
                 except KeyError:
                     # no coordinates were listed for that variable
@@ -89,9 +92,9 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         
         # build the dictionary of coordinates
         coords = {}
-        print('coordinate names', coordinate_names)
+        # print('coordinate names', coordinate_names)
         for coordinate in coordinate_names:
-            print('coordinate', coordinate)
+            # print('coordinate', coordinate)
             short_name = coordinate.split('/')[-1]
             # drop the coordiantes from the dataarray
             coord_values = dataarray_dicts.pop(short_name)
@@ -101,7 +104,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         return xr.Dataset(
             dataarray_dicts,
             coords=coords,
-            attrs={'test': 123},
+            # attrs={'test': 123},
         )
 
     open_dataset_parameters = ["filename_or_obj", "drop_variables"]
