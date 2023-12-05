@@ -299,7 +299,7 @@ class H5Dataset:
         elif self.meta.type == H5Metadata.STRING_TYPE:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         elif self.resourceObject.verbose:
-            logger.error(f'unsupported data type {self.meta.type}: unable to populate values')
+            logger.error(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
     #######################
     # readField
@@ -729,7 +729,7 @@ class H5Dataset:
 
         # check version
         if self.resourceObject.errorChecking and version != 1:
-            raise FatalError(f'unsupported datatype version: {version}')
+            raise FatalError(f'unsupported datatype version {version}')
 
         # Fixed Point
         if meta.type == H5Metadata.FIXED_POINT_TYPE:
@@ -772,6 +772,11 @@ class H5Dataset:
                 logger.info(f'Exponent Bias:        {exp_bias}')
             else:
                 self.pos += 12
+        # Reference
+        elif meta.type == H5Metadata.COMPOUND_TYPE:
+            meta.signedval = True
+            logger.error(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
+            self.pos = starting_position + msg_size
         # Reference
         elif meta.type == H5Metadata.REFERENCE_TYPE:
             meta.signedval = True
@@ -854,7 +859,7 @@ class H5Dataset:
                 logger.info(f'Character Set:        {charset_str}')
         # Default
         elif self.resourceObject.errorChecking:
-            raise FatalError(f'unsupported datatype: {meta.type}')
+            raise FatalError(f'unsupported datatype {meta.type}')
 
         # return bytes read
         return self.pos - starting_position

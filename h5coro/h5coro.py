@@ -199,8 +199,7 @@ class H5Coro:
                         listing[element][attribute] = attributes[attribute]
 
         except RuntimeError as e:
-            print(f'H5Coro encountered an error listing the group {group}: {e}')
-            logger.debug(f'H5Coro encountered an error listing the group {group}: {e}')
+            logger.critical(f'H5Coro encountered an error listing the group {group}: {e}')
 
         # return results
         if w_inspect:
