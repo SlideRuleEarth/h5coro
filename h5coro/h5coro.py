@@ -213,7 +213,7 @@ class H5Coro:
     def readAttribute(self, attribute):
         attribute = massagePath(attribute)
         promise = self.readDatasets([attribute], block=True, enableAttributes=True)
-        return promise[attribute].values
+        return promise[attribute]
 
     #######################
     # ioRequest
