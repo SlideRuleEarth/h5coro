@@ -188,11 +188,12 @@ class H5Coro:
                         variables.add(element)
 
             # inspect each variable to get datatype, dimensions, and optionally the attributes
-            if w_inspect and len(variables) > 0:
+            if w_inspect and (len(variables) > 0 or len(attributes) > 0):
+                variables.update(attributes)
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(variables))
                 futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr) for variable in variables]
                 for future in concurrent.futures.as_completed(futures):
-                    variable, metadata, attributes = future.result()
+                    variable, metadata, attributes = future.result() # overwrites attribute set
                     element = isolateElement(variable, group)
                     listing[element] = {'__metadata__': metadata}
                     for attribute in attributes:
@@ -211,7 +212,6 @@ class H5Coro:
     # readAttribute
     #######################
     def readAttribute(self, attribute):
-        attribute = massagePath(attribute)
         promise = self.readDatasets([attribute], block=True, enableAttributes=True)
         return promise[attribute]
 

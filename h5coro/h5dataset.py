@@ -244,14 +244,14 @@ class H5Dataset:
                     cdimsizes[0] = self.meta.chunkDimensions[0] * self.meta.typeSize  # number of chunk rows
                     for i in range(1, self.meta.ndims):
                         cdimsizes[0] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[0] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[0] *= self.meta.chunkDimensions[i]        # number of columns in chunks
                     cdimsizes[1] = self.meta.typeSize
                     for i in range(1, self.meta.ndims):
-                        cdimsizes[1] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[1] *= self.meta.chunkDimensions[i]        # number of columns in chunks
                     cdimsizes[2] = self.meta.typeSize
                     for i in range(1, self.meta.ndims):
                         cdimsizes[2] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[2] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[2] *= self.meta.chunkDimensions[i]        # number of columns in chunks
 
                     # initialize loop variables
                     ci = self.FLAT_NDIMS - 1;                               # chunk dimension index
