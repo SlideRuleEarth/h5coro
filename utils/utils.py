@@ -1,5 +1,5 @@
 import h5coro
-from h5coro import s3driver, filedriver
+from h5coro import s3driver, filedriver, logger
 import earthaccess
 import argparse
 import logging
@@ -27,25 +27,12 @@ elif args.driver == "s3":
 else:
     args.driver = None
 
-# Configure Log Level #
-if args.loglevel != "unset":
-    args.verbose = True
-    if args.loglevel == "DEBUG":
-        args.loglevel = logging.DEBUG
-    elif args.loglevel == "INFO":
-        args.loglevel = logging.INFO
-    elif args.loglevel == "WARNING":
-        args.loglevel = logging.WARNING
-    elif args.loglevel == "WARN":
-        args.loglevel = logging.WARN
-    elif args.loglevel == "ERROR":
-        args.loglevel = logging.ERROR
-    elif args.loglevel == "FATAL":
-        args.loglevel = logging.FATAL
-    elif args.loglevel == "CRITICAL":
-        args.loglevel = logging.CRITICAL
+# Configure Logging #
+if args.loglevel == "unset":
+    args.loglevel = logging.CRITICAL
 else:
-    args.loglevel = logging.ERROR
+    args.verbose = True
+logger.config(logLevel=args.loglevel)
 
 # Configure Credentials #
 credentials = {"profile":args.profile}
@@ -55,6 +42,3 @@ if args.daac != "None":
     credentials = { "aws_access_key_id": s3_creds["accessKeyId"],
                     "aws_secret_access_key": s3_creds["secretAccessKey"],
                     "aws_session_token": s3_creds["sessionToken"] }
-
-# Configure H5Coro #
-h5coro.config(logLevel=args.loglevel)

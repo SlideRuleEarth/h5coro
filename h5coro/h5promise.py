@@ -30,13 +30,7 @@
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from threading import Condition, Thread
 from h5coro.h5dataset import H5Dataset
-import logging
-
-###############################################################################
-# Logging
-###############################################################################
-
-logger = logging.getLogger(__name__)
+from h5coro.logger import log
 
 ###############################################################################
 # Local Functions
@@ -46,7 +40,7 @@ def datasetThread(resourceObject, dataset, startRow=0, numRows=H5Dataset.ALL_ROW
     try:
         return H5Dataset(resourceObject, dataset, startRow, numRows, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
     except RuntimeError as e:
-        logger.warning(f'H5Coro encountered error reading {dataset}: {e}')
+        log.warning(f'H5Coro encountered error reading {dataset}: {e}')
         return H5Dataset(resourceObject, dataset, startRow, numRows, makeNull=True, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
 def resultThread(promise, futures):
