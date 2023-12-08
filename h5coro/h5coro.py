@@ -31,8 +31,6 @@ from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.logger import log
 import concurrent.futures
-import logging
-import sys
 
 ###############################################################################
 # CONSTANTS
@@ -62,7 +60,7 @@ def inspectThread(resourceObject, variable, w_attr):
 
 def isolateElement(path, group):
     if path.startswith(group):
-        element = path.split(group)[1]
+        element = path[len(group):]
         if len(element) > 0:
             if element[0] == '/':
                 element = element[1:]
@@ -84,7 +82,6 @@ class H5Coro:
         driver_class,
         credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
-        enablePrefetch = ENABLE_PREFETCH_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
         verbose = VERBOSE_DEFAULT
 
@@ -97,7 +94,6 @@ class H5Coro:
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
-        self.enablePrefetch = enablePrefetch
 
         self.cache = {}
         self.pathAddresses = {}
