@@ -29,6 +29,7 @@
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
+from h5coro.logger import log
 import concurrent.futures
 import logging
 import sys
@@ -48,16 +49,6 @@ CACHE_LINE_SIZE_DEFAULT = 0x400000
 ENABLE_PREFETCH_DEFAULT = False
 
 ###############################################################################
-# LOGGING
-###############################################################################
-
-logger = logging.getLogger(__name__)
-def config( logLevel=None,
-            logFormat='%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s' ):
-    if logLevel != None:
-        logging.basicConfig(stream=sys.stdout, level=logLevel, format=logFormat)
-
-###############################################################################
 # H5Coro Functions
 ###############################################################################
 
@@ -66,7 +57,7 @@ def inspectThread(resourceObject, variable, w_attr):
         metadata, attributes = resourceObject.inspectVariable(variable, w_attr=w_attr)
         return variable, metadata, attributes
     except RuntimeError as e:
-        logger.warning(f'H5Coro encountered an error inspecting {variable}: {e}')
+        log.warning(f'H5Coro encountered an error inspecting {variable}: {e}')
         return variable, {}, {}
 
 def isolateElement(path, group):
@@ -188,19 +179,19 @@ class H5Coro:
                         variables.add(element)
 
             # inspect each variable to get datatype, dimensions, and optionally the attributes
-            if w_inspect and len(variables) > 0:
+            if w_inspect and (len(variables) > 0 or len(attributes) > 0):
+                variables.update(attributes)
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(variables))
                 futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr) for variable in variables]
                 for future in concurrent.futures.as_completed(futures):
-                    variable, metadata, attributes = future.result()
+                    variable, metadata, attributes = future.result() # overwrites attribute set
                     element = isolateElement(variable, group)
                     listing[element] = {'__metadata__': metadata}
                     for attribute in attributes:
                         listing[element][attribute] = attributes[attribute]
 
         except RuntimeError as e:
-            print(f'H5Coro encountered an error listing the group {group}: {e}')
-            logger.debug(f'H5Coro encountered an error listing the group {group}: {e}')
+            log.critical(f'H5Coro encountered an error listing the group {group}: {e}')
 
         # return results
         if w_inspect:
@@ -212,9 +203,8 @@ class H5Coro:
     # readAttribute
     #######################
     def readAttribute(self, attribute):
-        attribute = massagePath(attribute)
         promise = self.readDatasets([attribute], block=True, enableAttributes=True)
-        return promise[attribute].values
+        return promise[attribute]
 
     #######################
     # ioRequest

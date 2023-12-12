@@ -28,9 +28,9 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from h5coro.h5metadata import H5Metadata
+from h5coro.logger import log
 from datetime import datetime
 import struct
-import logging
 import zlib
 import ctypes
 import numpy
@@ -52,12 +52,6 @@ INVALID_VALUE = {
     4: 0xFFFFFFFF,
     8: 0xFFFFFFFFFFFFFFFF
 }
-
-###############################################################################
-# GLOBALS
-###############################################################################
-
-logger = logging.getLogger(__name__)
 
 ###############################################################################
 # EXCEPTIONS
@@ -244,14 +238,14 @@ class H5Dataset:
                     cdimsizes[0] = self.meta.chunkDimensions[0] * self.meta.typeSize  # number of chunk rows
                     for i in range(1, self.meta.ndims):
                         cdimsizes[0] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[0] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[0] *= self.meta.chunkDimensions[i]        # number of columns in chunks
                     cdimsizes[1] = self.meta.typeSize
                     for i in range(1, self.meta.ndims):
-                        cdimsizes[1] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[1] *= self.meta.chunkDimensions[i]        # number of columns in chunks
                     cdimsizes[2] = self.meta.typeSize
                     for i in range(1, self.meta.ndims):
                         cdimsizes[2] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[2] *= self.meta.chunkDimensions[i]             # number of columns in chunks
+                        cdimsizes[2] *= self.meta.chunkDimensions[i]        # number of columns in chunks
 
                     # initialize loop variables
                     ci = self.FLAT_NDIMS - 1;                               # chunk dimension index
@@ -299,7 +293,7 @@ class H5Dataset:
         elif self.meta.type == H5Metadata.STRING_TYPE:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         elif self.resourceObject.verbose:
-            logger.error(f'unsupported data type {self.meta.type}: unable to populate values')
+            log.error(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
     #######################
     # readField
@@ -380,11 +374,11 @@ class H5Dataset:
 
         # print file information
         if resourceObject.verbose:
-            logger.info(f'File Information @0x{root_group_offset:x}')
-            logger.info(f'Size of Offsets:      {resourceObject.offsetSize}')
-            logger.info(f'Size of Lengths:      {resourceObject.lengthSize}')
-            logger.info(f'Base Address:         {resourceObject.baseAddress}')
-            logger.info(f'Root Group Offset:    0x{root_group_offset:x}')
+            log.info(f'File Information @0x{root_group_offset:x}')
+            log.info(f'Size of Offsets:      {resourceObject.offsetSize}')
+            log.info(f'Size of Lengths:      {resourceObject.lengthSize}')
+            log.info(f'Base Address:         {resourceObject.baseAddress}')
+            log.info(f'Root Group Offset:    0x{root_group_offset:x}')
 
         # return root group offset
         return root_group_offset
@@ -420,7 +414,7 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Object Information V0 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'<<Object Information V0 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and version
         if self.resourceObject.errorChecking:
@@ -441,10 +435,10 @@ class H5Dataset:
                 modification_time = self.readField(4)
                 change_time = self.readField(4)
                 birth_time = self.readField(4)
-                logger.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
-                logger.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
-                logger.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
-                logger.info(f'Birth Time:           {datetime.fromtimestamp(birth_time)}')
+                log.info(f'Access Time:          {datetime.fromtimestamp(access_time)}')
+                log.info(f'Modification Time:    {datetime.fromtimestamp(modification_time)}')
+                log.info(f'Change Time:          {datetime.fromtimestamp(change_time)}')
+                log.info(f'Birth Time:           {datetime.fromtimestamp(birth_time)}')
             else:
                 self.pos += 16
 
@@ -453,8 +447,8 @@ class H5Dataset:
             if self.resourceObject.verbose:
                 max_compact_attr = self.readField(2)
                 max_dense_attr = self.readField(2)
-                logger.info(f'Max Compact Attr:     {max_compact_attr}')
-                logger.info(f'Max Dense Attr:       {max_dense_attr}')
+                log.info(f'Max Compact Attr:     {max_compact_attr}')
+                log.info(f'Max Dense Attr:       {max_dense_attr}')
             else:
                 self.pos += 4
 
@@ -513,12 +507,12 @@ class H5Dataset:
         if self.resourceObject.verbose:
             # read number of header messages
             num_hdr_msgs = self.readField(2)
-            logger.info(f'<<Object Information V1 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'# Header Messages:    {num_hdr_msgs}')
+            log.info(f'<<Object Information V1 - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'# Header Messages:    {num_hdr_msgs}')
 
             # read object reference count
             obj_ref_count = self.readField(4)
-            logger.info(f'Obj Reference Count:  {obj_ref_count}')
+            log.info(f'Obj Reference Count:  {obj_ref_count}')
         else:
             self.pos += 6
 
@@ -603,7 +597,7 @@ class H5Dataset:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
             if self.resourceObject.verbose:
-                logger.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
+                log.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
             return msg_size
 
@@ -623,10 +617,10 @@ class H5Dataset:
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
         if self.resourceObject.verbose:
-            logger.info(f'<<Dataspace Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Dimensionality:       {dimensionality}')
-            logger.info(f'Flags:                {flags}')
+            log.info(f'<<Dataspace Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Dimensionality:       {dimensionality}')
+            log.info(f'Flags:                {flags}')
 
         # check version and flags and dimenstionality
         if self.resourceObject.errorChecking:
@@ -645,7 +639,7 @@ class H5Dataset:
                 dimension = self.readField(self.resourceObject.lengthSize)
                 meta.dimensions.append(dimension)
                 if self.resourceObject.verbose:
-                    logger.info(f'Dimension {x}:          {dimension}')
+                    log.info(f'Dimension {x}:          {dimension}')
 
             # skip over dimension permutations
             if flags & MAX_DIM_PRESENT:
@@ -667,9 +661,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Link Information Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Flags:                {flags}')
+            log.info(f'<<Link Information Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Flags:                {flags}')
 
         # check version
         if self.resourceObject.errorChecking and (version != 0):
@@ -679,20 +673,20 @@ class H5Dataset:
         if flags & MAX_CREATE_PRESENT_BIT:
             max_create_index = self.readField(8)
             if self.resourceObject.verbose:
-                logger.info(f'Max Create Index:     {max_create_index}')
+                log.info(f'Max Create Index:     {max_create_index}')
 
         # read heap address and name index
         heap_address = self.readField(self.resourceObject.offsetSize)
         name_index = self.readField(self.resourceObject.offsetSize)
         if self.resourceObject.verbose:
-            logger.info(f'Heap Address:         0x{heap_address:x}')
-            logger.info(f'Name Index:           0x{name_index:x}')
+            log.info(f'Heap Address:         0x{heap_address:x}')
+            log.info(f'Name Index:           0x{name_index:x}')
 
         # read address of v2 B-tree for creation order index
         if flags & CREATE_ORDER_PRESENT_BIT:
             create_order_index = self.readField(self.resourceObject.offsetSize)
             if self.resourceObject.verbose:
-                logger.info(f'Create Order Index:   0x{create_order_index:x}')
+                log.info(f'Create Order Index:   0x{create_order_index:x}')
 
         # follow heap address if provided
         if heap_address != INVALID_VALUE[self.resourceObject.offsetSize]:
@@ -721,15 +715,15 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Data Type Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Type Size:            {meta.typeSize}')
-            logger.info(f'Data Type:            {meta.type}')
-            logger.info(f'Signed:               {meta.signedval}')
+            log.info(f'<<Data Type Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Type Size:            {meta.typeSize}')
+            log.info(f'Data Type:            {meta.type}')
+            log.info(f'Signed:               {meta.signedval}')
 
         # check version
         if self.resourceObject.errorChecking and version != 1:
-            raise FatalError(f'unsupported datatype version: {version}')
+            raise FatalError(f'unsupported datatype version {version}')
 
         # Fixed Point
         if meta.type == H5Metadata.FIXED_POINT_TYPE:
@@ -738,10 +732,10 @@ class H5Dataset:
                 pad_type        = (databits & 0x06) >> 1
                 bit_offset      = self.readField(2)
                 bit_precision   = self.readField(2)
-                logger.info(f'Byte Order:           {byte_order}')
-                logger.info(f'Pad Type:             {pad_type}')
-                logger.info(f'Bit Offset:           {bit_offset}')
-                logger.info(f'Bit Precision:        {bit_precision}')
+                log.info(f'Byte Order:           {byte_order}')
+                log.info(f'Pad Type:             {pad_type}')
+                log.info(f'Bit Offset:           {bit_offset}')
+                log.info(f'Bit Precision:        {bit_precision}')
             else:
                 self.pos += 4
         # Floating Point
@@ -759,19 +753,24 @@ class H5Dataset:
                 mant_location   = self.readField(1)
                 mant_size       = self.readField(1)
                 exp_bias        = self.readField(4)
-                logger.info(f'Byte Order:           {byte_order}')
-                logger.info(f'Pad Type:             {pad_type}')
-                logger.info(f'Mantissa Norm:        {mant_norm}')
-                logger.info(f'Sign Location:        {sign_loc}')
-                logger.info(f'Bit Offset:           {bit_offset}')
-                logger.info(f'Bit Precision:        {bit_precision}')
-                logger.info(f'Exponent Location:    {exp_location}')
-                logger.info(f'Exponent Size:        {exp_size}')
-                logger.info(f'Mantissa Location:    {mant_location}')
-                logger.info(f'Mantissa Size:        {mant_size}')
-                logger.info(f'Exponent Bias:        {exp_bias}')
+                log.info(f'Byte Order:           {byte_order}')
+                log.info(f'Pad Type:             {pad_type}')
+                log.info(f'Mantissa Norm:        {mant_norm}')
+                log.info(f'Sign Location:        {sign_loc}')
+                log.info(f'Bit Offset:           {bit_offset}')
+                log.info(f'Bit Precision:        {bit_precision}')
+                log.info(f'Exponent Location:    {exp_location}')
+                log.info(f'Exponent Size:        {exp_size}')
+                log.info(f'Mantissa Location:    {mant_location}')
+                log.info(f'Mantissa Size:        {mant_size}')
+                log.info(f'Exponent Bias:        {exp_bias}')
             else:
                 self.pos += 12
+        # Reference
+        elif meta.type == H5Metadata.COMPOUND_TYPE:
+            meta.signedval = True
+            log.error(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
+            self.pos = starting_position + msg_size
         # Reference
         elif meta.type == H5Metadata.REFERENCE_TYPE:
             meta.signedval = True
@@ -790,7 +789,7 @@ class H5Dataset:
                     if self.resourceObject.errorChecking:
                         raise FatalError(f'unrecognized reference type: {ref_type}')
                     ref_str = "unrecognized"
-                logger.info(f'Reference Type:       {ref_str}')
+                log.info(f'Reference Type:       {ref_str}')
         # Variable Length
         elif meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
             if self.resourceObject.verbose:
@@ -818,9 +817,9 @@ class H5Dataset:
                 elif charset == 1:
                     charset_str = "UTF-8"
 
-                logger.info(f'Variable Type:        {vl_type_str}')
-                logger.info(f'Padding Type:         {padding_str}')
-                logger.info(f'Character Set:        {charset_str}')
+                log.info(f'Variable Type:        {vl_type_str}')
+                log.info(f'Padding Type:         {padding_str}')
+                log.info(f'Character Set:        {charset_str}')
 
             # save off
             vlen_type_size  = meta.typeSize
@@ -850,11 +849,11 @@ class H5Dataset:
                 elif charset == 1:
                     charset_str = "UTF-8"
 
-                logger.info(f'Padding Type:         {padding_str}')
-                logger.info(f'Character Set:        {charset_str}')
+                log.info(f'Padding Type:         {padding_str}')
+                log.info(f'Character Set:        {charset_str}')
         # Default
         elif self.resourceObject.errorChecking:
-            raise FatalError(f'unsupported datatype: {meta.type}')
+            raise FatalError(f'unsupported datatype {meta.type}')
 
         # return bytes read
         return self.pos - starting_position
@@ -869,8 +868,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Fill Value Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
+            log.info(f'<<Fill Value Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
 
         # check version
         if self.resourceObject.errorChecking and (version != 2) and (version != 3):
@@ -881,8 +880,8 @@ class H5Dataset:
             if self.resourceObject.verbose:
                 space_allocation_time = self.readField(1)
                 fill_value_write_time = self.readField(1)
-                logger.info(f'Space Allocation Time:{space_allocation_time}')
-                logger.info(f'Fill Value Write Time:{fill_value_write_time}')
+                log.info(f'Space Allocation Time:{space_allocation_time}')
+                log.info(f'Fill Value Write Time:{fill_value_write_time}')
             else:
                 self.pos += 2
 
@@ -895,7 +894,7 @@ class H5Dataset:
         else:
             flags = self.readField(1)
             if self.resourceObject.verbose:
-                logger.info(f'Fill Flags:           {flags}')
+                log.info(f'Fill Flags:           {flags}')
 
             if flags & FILL_VALUE_DEFINED:
                 self.meta.fillsize = self.readField(4)
@@ -903,8 +902,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'Fill Value Size:      {self.meta.fillsize}')
-            logger.info(f'Fill Value:           {self.meta.fillvalue}')
+            log.info(f'Fill Value Size:      {self.meta.fillsize}')
+            log.info(f'Fill Value:           {self.meta.fillvalue}')
 
         # return bytes read
         return self.pos - starting_position
@@ -926,9 +925,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Link Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Flags:                {flags}')
+            log.info(f'<<Link Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Flags:                {flags}')
 
         # check version
         if self.resourceObject.errorChecking and version != 1:
@@ -958,10 +957,10 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'Link Type:            {link_type}')
-            logger.info(f'Creation Order:       {create_order}')
-            logger.info(f'Character Set:        {char_set}')
-            logger.info(f'Link Name:            {link_name}')
+            log.info(f'Link Type:            {link_type}')
+            log.info(f'Creation Order:       {create_order}')
+            log.info(f'Character Set:        {char_set}')
+            log.info(f'Link Name:            {link_name}')
 
         # check if follow link
         follow_link = False
@@ -972,7 +971,7 @@ class H5Dataset:
         if link_type == HARD_LINK:
             obj_hdr_addr = self.readField(self.resourceObject.offsetSize)
             if self.resourceObject.verbose:
-                logger.info(f'Hard Link:            0x{obj_hdr_addr:x}')
+                log.info(f'Hard Link:            0x{obj_hdr_addr:x}')
             # update meta data table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
             self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
@@ -990,7 +989,7 @@ class H5Dataset:
             soft_link_len = self.readField(2)
             soft_link = self.readArray(soft_link_len).tobytes().decode('utf-8')
             if self.resourceObject.verbose:
-                logger.info(f'Soft Link:            {soft_link}')
+                log.info(f'Soft Link:            {soft_link}')
             if self.resourceObject.errorChecking and follow_link:
                 raise FatalError(f'unsupported soft link encountered: {soft_link}')
 
@@ -998,7 +997,7 @@ class H5Dataset:
             ext_link_len = self.readField(2)
             ext_link = self.readArray(ext_link_len).tobytes().decode('utf-8')
             if self.resourceObject.verbose:
-                logger.info(f'External Link:        {ext_link}')
+                log.info(f'External Link:        {ext_link}')
             if self.resourceObject.errorChecking and follow_link:
                 raise FatalError(f'unsupported external link encountered: {ext_link}')
 
@@ -1018,9 +1017,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Data Layout Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Layout:               {self.meta.layout}')
+            log.info(f'<<Data Layout Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Layout:               {self.meta.layout}')
 
         # check version
         if self.resourceObject.errorChecking and version != 3:
@@ -1053,17 +1052,17 @@ class H5Dataset:
             self.meta.elementSize = self.readField(4)
             # display
             if self.resourceObject.verbose:
-                logger.info(f'Element Size:         {self.meta.elementSize}')
-                logger.info(f'# Chunked Dimensions: {chunk_num_dim}')
+                log.info(f'Element Size:         {self.meta.elementSize}')
+                log.info(f'# Chunked Dimensions: {chunk_num_dim}')
                 for d in range(chunk_num_dim):
-                    logger.info(f'Chunk Dimension {d}:    {self.meta.chunkDimensions[d]}')
+                    log.info(f'Chunk Dimension {d}:    {self.meta.chunkDimensions[d]}')
         elif self.resourceObject.errorChecking:
             raise FatalError(f'unsupported data layout: {self.meta.layout}')
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'Dataset Size:         {self.meta.size}')
-            logger.info(f'Dataset Address:      {self.meta.address}')
+            log.info(f'Dataset Size:         {self.meta.size}')
+            log.info(f'Dataset Address:      {self.meta.address}')
 
         # return bytes read
         return self.pos - starting_position
@@ -1078,9 +1077,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Filter Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Num Filters:          {num_filters}')
+            log.info(f'<<Filter Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Num Filters:          {num_filters}')
 
         # check version
         if self.resourceObject.errorChecking and (version != 1) and (version != 2):
@@ -1117,10 +1116,10 @@ class H5Dataset:
 
             # display
             if self.resourceObject.verbose:
-                logger.info(f'Filter ID:            {filter_id}')
-                logger.info(f'Flags:                {flags}')
-                logger.info(f'# Parameters:         {num_parms}')
-                logger.info(f'Filter Name:          {filter_name}')
+                log.info(f'Filter ID:            {filter_id}')
+                log.info(f'Flags:                {flags}')
+                log.info(f'# Parameters:         {num_parms}')
+                log.info(f'Filter Name:          {filter_name}')
 
             # set filter
             try:
@@ -1152,8 +1151,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Attribute Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
+            log.info(f'<<Attribute Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
 
         # check version
         if self.resourceObject.errorChecking and (version != 1):
@@ -1170,10 +1169,10 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'Name:                 {attr_name}')
-            logger.info(f'Message Size:         {msg_size}')
-            logger.info(f'Datatype Size:        {datatype_size}')
-            logger.info(f'Dataspace Size:       {dataspace_size}')
+            log.info(f'Name:                 {attr_name}')
+            log.info(f'Message Size:         {msg_size}')
+            log.info(f'Datatype Size:        {datatype_size}')
+            log.info(f'Dataspace Size:       {dataspace_size}')
 
         # initialize local meta structure
         meta = H5Metadata()
@@ -1224,9 +1223,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Header Continuation Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Offset:               0x{hc_offset:x}')
-            logger.info(f'Length:               {hc_length}')
+            log.info(f'<<Header Continuation Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Offset:               0x{hc_offset:x}')
+            log.info(f'Length:               {hc_length}')
 
         # go to continuation block
         return_position = self.pos
@@ -1268,9 +1267,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Symbol Table Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'B-Tree Address:       {btree_addr}')
-            logger.info(f'Heap Address:         {heap_addr}')
+            log.info(f'<<Symbol Table Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'B-Tree Address:       {btree_addr}')
+            log.info(f'Heap Address:         {heap_addr}')
 
         # read heap info
         self.pos = heap_addr
@@ -1315,10 +1314,10 @@ class H5Dataset:
             right_sibling   = self.readField(self.resourceObject.offsetSize)
             key0            = self.readField(self.resourceObject.lengthSize)
             if self.resourceObject.verbose:
-                logger.info(f'Entries Used:         {entries_used}')
-                logger.info(f'Left Sibling:         {left_sibling}')
-                logger.info(f'Right Sibling:        {right_sibling}')
-                logger.info(f'First Key:            {key0}')
+                log.info(f'Entries Used:         {entries_used}')
+                log.info(f'Left Sibling:         {left_sibling}')
+                log.info(f'Right Sibling:        {right_sibling}')
+                log.info(f'First Key:            {key0}')
 
             # loop through entries in current node
             for _ in range(entries_used):
@@ -1368,9 +1367,9 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Attribute Info - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Version:              {version}')
-            logger.info(f'Flags:                {flags}')
+            log.info(f'<<Attribute Info - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Version:              {version}')
+            log.info(f'Flags:                {flags}')
 
         # check version
         if self.resourceObject.errorChecking and (version != 0):
@@ -1380,20 +1379,20 @@ class H5Dataset:
         if flags & MAX_CREATE_PRESENT_BIT:
             max_create_index = self.readField(2)
             if self.resourceObject.verbose:
-                logger.info(f'Max Creation Index:   {max_create_index}')
+                log.info(f'Max Creation Index:   {max_create_index}')
 
         # read heap and name offsets
         heap_address    = self.readField(self.resourceObject.offsetSize)
         name_index      = self.readField(self.resourceObject.offsetSize)
         if self.resourceObject.verbose:
-            logger.info(f'Heap Address:         {heap_address}')
-            logger.info(f'Name Index:           {name_index}')
+            log.info(f'Heap Address:         {heap_address}')
+            log.info(f'Name Index:           {name_index}')
 
         # read creation order index
         if flags & CREATE_ORDER_PRESENT_BIT:
             create_order_index = self.readField(self.resourceObject.offsetSize)
             if self.resourceObject.verbose:
-                logger.info(f'Creation Order Index: {create_order_index}')
+                log.info(f'Creation Order Index: {create_order_index}')
 
         # follow heap address if provided */
         if heap_address != INVALID_VALUE[self.resourceObject.offsetSize]:
@@ -1413,7 +1412,7 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Symbol Table - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'<<Symbol Table - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and version
         if self.resourceObject.errorChecking:
@@ -1451,8 +1450,8 @@ class H5Dataset:
 
             # display
             if self.resourceObject.verbose:
-                logger.info(f'Link Name:            {link_name}')
-                logger.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
+                log.info(f'Link Name:            {link_name}')
+                log.info(f'Obj Hdr Addr:         {obj_hdr_addr}')
 
             # update path address table
             group_path = '/'.join(self.datasetPath[:dlvl] + [link_name])
@@ -1507,30 +1506,30 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Fractal Heap - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
-            logger.info(f'Heap ID Length:       {heap_obj_id_len}')
-            logger.info(f'I/O Filters Length:   {io_filter_len}')
-            logger.info(f'Flags:                {flags}')
-            logger.info(f'Max Size of Objects:  {max_size_mg_obj}')
-            logger.info(f'Next Huge Object ID:  {next_huge_obj_id}')
-            logger.info(f'v2 B-tree Address:    0x{btree_addr_huge_obj:x}')
-            logger.info(f'Free Space in Blocks: {free_space_mg_blks}')
-            logger.info(f'Address Free Space:   0x{addr_free_space_mg:x}')
-            logger.info(f'Managed Space:        {mg_space}')
-            logger.info(f'Allocated Heap Space: {alloc_mg_space}')
-            logger.info(f'Direct Block Offset:  0x{dblk_alloc_iter:x}')
-            logger.info(f'Managed Heap Objects: {mg_objs}')
-            logger.info(f'Size of Huge Objects: {huge_obj_size}')
-            logger.info(f'Huge Objects in Heap: {huge_objs}')
-            logger.info(f'Size of Tiny Objects: {tiny_obj_size}')
-            logger.info(f'Tiny Objects in Heap: {tiny_objs}')
-            logger.info(f'Table Width:          {table_width}')
-            logger.info(f'Starting Block Size:  {starting_blk_size}')
-            logger.info(f'Max Direct Block Size:{max_dblk_size}')
-            logger.info(f'Max Heap Size:        {max_heap_size}')
-            logger.info(f'Starting # of Rows:   {start_num_rows}')
-            logger.info(f'Address of Root Block:0x{root_blk_addr:x}')
-            logger.info(f'Current # of Rows:    {curr_num_rows}')
+            log.info(f'<<Fractal Heap - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'Heap ID Length:       {heap_obj_id_len}')
+            log.info(f'I/O Filters Length:   {io_filter_len}')
+            log.info(f'Flags:                {flags}')
+            log.info(f'Max Size of Objects:  {max_size_mg_obj}')
+            log.info(f'Next Huge Object ID:  {next_huge_obj_id}')
+            log.info(f'v2 B-tree Address:    0x{btree_addr_huge_obj:x}')
+            log.info(f'Free Space in Blocks: {free_space_mg_blks}')
+            log.info(f'Address Free Space:   0x{addr_free_space_mg:x}')
+            log.info(f'Managed Space:        {mg_space}')
+            log.info(f'Allocated Heap Space: {alloc_mg_space}')
+            log.info(f'Direct Block Offset:  0x{dblk_alloc_iter:x}')
+            log.info(f'Managed Heap Objects: {mg_objs}')
+            log.info(f'Size of Huge Objects: {huge_obj_size}')
+            log.info(f'Huge Objects in Heap: {huge_objs}')
+            log.info(f'Size of Tiny Objects: {tiny_obj_size}')
+            log.info(f'Tiny Objects in Heap: {tiny_objs}')
+            log.info(f'Table Width:          {table_width}')
+            log.info(f'Starting Block Size:  {starting_blk_size}')
+            log.info(f'Max Direct Block Size:{max_dblk_size}')
+            log.info(f'Max Heap Size:        {max_heap_size}')
+            log.info(f'Starting # of Rows:   {start_num_rows}')
+            log.info(f'Address of Root Block:0x{root_blk_addr:x}')
+            log.info(f'Current # of Rows:    {curr_num_rows}')
 
         # check signature and version
         if self.resourceObject.errorChecking:
@@ -1543,8 +1542,8 @@ class H5Dataset:
         if io_filter_len > 0:
             filter_root_dblk   = self.readField(self.resourceObject.lengthSize) # Size of Filtered Root Direct Block
             filter_mask        = self.readField(4) # I/O Filter Mask
-            logger.info(f'Filtered Direct Block:{filter_root_dblk}')
-            logger.info(f'I/O Filter Mask:      {filter_mask}')
+            log.info(f'Filtered Direct Block:{filter_root_dblk}')
+            log.info(f'I/O Filter Mask:      {filter_mask}')
             raise FatalError(f'Filtering unsupported on fractal heap: {io_filter_len}')
             # self.readMessage(FILTER_MSG, io_filter_len, obj_hdr_flags) # this currently populates filter for dataset
 
@@ -1593,7 +1592,7 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Direct Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            log.info(f'<<Direct Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if self.resourceObject.errorChecking:
@@ -1609,7 +1608,7 @@ class H5Dataset:
         # read block header
         if self.resourceObject.verbose:
             heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
-            logger.info(f'Heap Header Address:  {heap_hdr_addr}')
+            log.info(f'Heap Header Address:  {heap_hdr_addr}')
         else:
             self.pos += self.resourceObject.offsetSize
         self.pos += heap_info['blk_offset_size'] # block offset reading is not supported because size can be non-standard integer size (like 3, 5, 6, 7)
@@ -1630,7 +1629,7 @@ class H5Dataset:
             self.pos = peak_addr
             if early_exit:
                 if self.resourceObject.verbose:
-                    logger.info(f'exiting direct block 0x{starting_position:x} early at 0x{self.pos:x}')
+                    log.info(f'exiting direct block 0x{starting_position:x} early at 0x{self.pos:x}')
                 break
 
             # read message
@@ -1665,7 +1664,7 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<Indirect Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
+            log.info(f'<<Indirect Block - {self.dataset}[{dlvl}] @0x{starting_position:x}: {heap_info["msg_type"]}, {block_size}>>')
 
         # check signature and version
         if self.resourceObject.errorChecking:
@@ -1681,7 +1680,7 @@ class H5Dataset:
         # read block header
         if self.resourceObject.verbose:
             heap_hdr_addr = self.readField(self.resourceObject.offsetSize) # Heap Header Address
-            logger.info(f'Heap Header Address:  {heap_hdr_addr}')
+            log.info(f'Heap Header Address:  {heap_hdr_addr}')
         else:
             self.pos += self.resourceObject.offsetSize
         self.pos += heap_info['blk_offset_size'] # block offset reading is not supported because size can be non-standard integer size (like 3, 5, 6, 7)
@@ -1695,10 +1694,10 @@ class H5Dataset:
         K = min(nrows, max_dblock_rows) * heap_info['table_width']
         N = K - (max_dblock_rows * heap_info['table_width'])
         if self.resourceObject.verbose:
-            logger.info(f'Number of Rows:       {nrows}')
-            logger.info(f'Max Direct Block Rows:{max_dblock_rows}')
-            logger.info(f'# Direct Blocks (K):  {K}')
-            logger.info(f'# Indirect Blocks (N):{N}')
+            log.info(f'Number of Rows:       {nrows}')
+            log.info(f'Max Direct Block Rows:{max_dblock_rows}')
+            log.info(f'# Direct Blocks (K):  {K}')
+            log.info(f'# Indirect Blocks (N):{N}')
 
         # read direct child blocks
         for row in range(nrows):
@@ -1758,7 +1757,7 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'<<B-Tree Node - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
+            log.info(f'<<B-Tree Node - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
 
         # check signature and node type
         if self.resourceObject.errorChecking:
@@ -1777,8 +1776,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            logger.info(f'Node Level:           {node_level}')
-            logger.info(f'Entries Used:         {entries_used}')
+            log.info(f'Node Level:           {node_level}')
+            log.info(f'Entries Used:         {entries_used}')
 
         # skip sibling addresses
         self.pos += self.resourceObject.offsetSize * 2
@@ -1797,13 +1796,13 @@ class H5Dataset:
 
             # display
             if self.resourceObject.verbose:
-                logger.debug(f'Entry <{node_level}>:            {e}')
-                logger.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
-                logger.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
-                logger.debug(f'Chunk Key:            {child_key1} | {child_key2}')
-                logger.debug(f'Data Key:             {data_key1} | {data_key2}')
-                logger.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
-                logger.debug(f'Child Address:        0x{child_addr:x}')
+                log.debug(f'Entry <{node_level}>:            {e}')
+                log.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
+                log.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
+                log.debug(f'Chunk Key:            {child_key1} | {child_key2}')
+                log.debug(f'Data Key:             {data_key1} | {data_key2}')
+                log.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
+                log.debug(f'Child Address:        0x{child_addr:x}')
 
             # check inclusion
             if  (data_key1  >= child_key1 and data_key1  <  child_key2) or \
@@ -1850,9 +1849,9 @@ class H5Dataset:
 
                     # display
                     if self.resourceObject.verbose:
-                        logger.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.meta.typeSize)})')
-                        logger.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.meta.typeSize)})')
-                        logger.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})')
+                        log.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.meta.typeSize)})')
+                        log.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.meta.typeSize)})')
+                        log.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})')
 
                     # read chunk
                     if self.meta.filter[self.meta.DEFLATE_FILTER]:

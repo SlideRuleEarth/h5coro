@@ -27,13 +27,34 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import h5coro
-from utils import args, credentials
+import logging
 
-h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
-group = h5obj.listGroup(args.group, w_attr=True, w_inspect=True)
-#for variable, listing in group.items():
-#    print(f'{variable}:')
-#    for key, value in listing.items():
-#        print(f'  {key}: {value}')
+# Constants
+LOG_FORMAT = '%(created)f %(levelname)-5s [%(filename)s:%(lineno)5d] %(message)s'
 
+# Create and Initialize Log
+log = logging.getLogger(__name__)
+format = logging.Formatter(LOG_FORMAT)
+console = logging.StreamHandler()
+console.setFormatter(format)
+log.addHandler(console)
+
+# Config Function
+def config(logLevel):
+    if logLevel == "DEBUG":
+        logLevel = logging.DEBUG
+    elif logLevel == "INFO":
+        logLevel = logging.INFO
+    elif logLevel == "WARNING":
+        logLevel = logging.WARNING
+    elif logLevel == "WARN":
+        logLevel = logging.WARN
+    elif logLevel == "ERROR":
+        logLevel = logging.ERROR
+    elif logLevel == "FATAL":
+        logLevel = logging.FATAL
+    elif logLevel == "CRITICAL":
+        logLevel = logging.CRITICAL
+    log.setLevel(logLevel)
+    console.setLevel(logLevel)
+    
