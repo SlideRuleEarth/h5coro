@@ -4,12 +4,15 @@ import warnings
 
 from xarray.backends import BackendEntrypoint
 from h5coro import h5coro, s3driver, filedriver
+from h5coro.h5view import H5View
 import xarray as xr
 import numpy as np
 import earthaccess # removed from requirements.txt
 import os
 
 from xarray.core.dataset import Dataset
+
+from pprint import pprint
 
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
@@ -30,8 +33,6 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         or aws boto3 object or earthaccess Auth object
         '''
         
-        h5coro.config(logLevel=logging.ERROR)
-        
         # format credentials
         if isinstance(creds, earthaccess.auth.Auth):
             earthaccess_dict = creds.get_s3_credentials(daac='NSIDC')
@@ -43,68 +44,75 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         # connect to the s3 object
         h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=creds)
         
-        # define a function for formatting the output
-        def format_variable_attrs(results):
-            attrs = {}
-            for attribute, value in results["attributes"].items():
-                value_str = "<unsupported>"
-                if value != None:
-                    value_str = f'{value.values}'
-                attrs[attribute] = value_str
-            return attrs
+        # list the variables and attributes in the specified group and read their values
+        # TODO what if there is a group inside that group?
+        var_paths, attr_paths = h5obj.listGroup(group, w_attr=True, w_inspect=False)
+        var_paths = [os.path.join(group, p) for p in var_paths]
+        attr_paths = [os.path.join(group, p) for p in attr_paths]
+        var_promise = h5obj.readDatasets(var_paths, block=True)
+        attr_promise = h5obj.readDatasets(attr_paths, block=True)
+        view = H5View(var_promise)['gt1l']['heights']
+        view_attr = H5View(attr_promise)['gt1l']['heights']
         
-        # loop through that dictionary of datasets to generate a list of groups/variables and attrs
-        variables, attributes = h5obj.listGroup(group, w_attr=True, w_inspect=True)
+        # Format the top level attributes
+        toplevel_attrs = {}
+        for var in view_attr.keys():
+            toplevel_attrs[var] = view_attr[var]
+        
+        # Format the data variables
         dataarray_dicts = {}
         coordinate_names = []
-        for variable, results in variables.items():
-            # pull out data
-            # print('------ PROCESSING VARIABLE -----', variable)
-            var_data = h5obj.readDatasets(datasets=[variable[1:]], block=True)
-            
+        
+        for var in view.keys():   
             # pull out metadata
-            var_attrs = format_variable_attrs(results)
+            info = h5obj.listGroup(os.path.join(group, var), w_attr=True, w_inspect=True)
             
             # check dimensionality and build dataarray dictionary with relevant variables
-            if results['metadata'].ndims and results['metadata'].ndims > 1:
+            # QUESTION are the attributes repeated twice?
+            if info['coordinates']['__metadata__'].ndims > 1:
                 # ignore the 2d variable
-                warnings.warn((f'Variable {variable} has more than 1 dimension. Reading variables with'
+                warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with'
                                'more than 1 dimension is not currently supported. This variable will be'
                                'dropped.'))
                 continue
             else:
                 # build the coordinate list
                 try:
-                    coord = results['attributes'][os.path.join(variable, 'coordinates')].values
-                    coord = re.split(';|,| |\n', coord)
+                    coord = re.split(';|,| |\n', info['DIMENSION_LIST']['coordinates'])
                     coord = [c for c in coord if c]
-                    # print('COORD', coord)
                     for c in coord:
                         if not os.path.join(group, c) in coordinate_names:
-                            # print('appending ', os.path.join(group, c))
                             coordinate_names.append(os.path.join(group, c))
                 except KeyError:
                     # no coordinates were listed for that variable
-                    coord = [None]
+                    coord = ['delta_time']
 
                 # add data to the dict
-                dataarray_dicts[variable.split('/')[-1]] = (coord[0], var_data[variable[1:]].values, var_attrs)
+                dataarray_dicts[var] = (coord[0], view[var], info['description'])
         
         # build the dictionary of coordinates
         coords = {}
-        # print('coordinate names', coordinate_names)
         for coordinate in coordinate_names:
-            # print('coordinate', coordinate)
             short_name = coordinate.split('/')[-1]
             # drop the coordiantes from the dataarray
             coord_values = dataarray_dicts.pop(short_name)
             # add the coordiantes to the dictionary
-            coords[short_name] = coord_values[1]
+            coords[short_name] = coord_values
+        
+        # manually set delta_time to have delta_time as a coordinate
+        # if coords['delta_time']:
+        #     coords['delta_time'] = coords['delta_time'][1]
 
+        # print('DAs\n')
+        # pprint(dataarray_dicts)
+        # print('\n\n\ncoords')
+        # pprint(coords)
+        # print('\n\n\nattrs')
+        # pprint(toplevel_attrs)
         return xr.Dataset(
             dataarray_dicts,
-            coords=coords,
-            # attrs={'test': 123},
+            coords = coords,
+            attrs = toplevel_attrs,
         )
 
     open_dataset_parameters = ["filename_or_obj", "drop_variables"]
