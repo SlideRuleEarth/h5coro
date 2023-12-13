@@ -31,8 +31,6 @@ from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.logger import log
 import concurrent.futures
-import logging
-import sys
 
 ###############################################################################
 # CONSTANTS
@@ -52,17 +50,21 @@ ENABLE_PREFETCH_DEFAULT = False
 # H5Coro Functions
 ###############################################################################
 
-def inspectThread(resourceObject, variable, w_attr):
+def inspectThread(resourceObject, variable, w_attr, is_attr):
     try:
-        metadata, attributes = resourceObject.inspectVariable(variable, w_attr=w_attr)
-        return variable, metadata, attributes
+        if not is_attr:
+            metadata, attributes = resourceObject.inspectVariable(variable, w_attr=w_attr)
+            return variable, metadata, attributes, is_attr
+        else:
+            value = resourceObject.readAttribute(variable)
+            return variable, value, {}, is_attr
     except RuntimeError as e:
         log.warning(f'H5Coro encountered an error inspecting {variable}: {e}')
-        return variable, {}, {}
+        return variable, {}, {}, False
 
 def isolateElement(path, group):
     if path.startswith(group):
-        element = path.split(group)[1]
+        element = path[len(group):]
         if len(element) > 0:
             if element[0] == '/':
                 element = element[1:]
@@ -84,7 +86,6 @@ class H5Coro:
         driver_class,
         credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
-        enablePrefetch = ENABLE_PREFETCH_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
         verbose = VERBOSE_DEFAULT
 
@@ -97,7 +98,6 @@ class H5Coro:
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
-        self.enablePrefetch = enablePrefetch
 
         self.cache = {}
         self.pathAddresses = {}
@@ -162,7 +162,8 @@ class H5Coro:
         group = massagePath(group)
         variables = set()
         attributes = set()
-        listing = {}
+        var_listing = {}
+        attr_listing = {}
 
         try:
             # read elements in group
@@ -180,22 +181,25 @@ class H5Coro:
 
             # inspect each variable to get datatype, dimensions, and optionally the attributes
             if w_inspect and (len(variables) > 0 or len(attributes) > 0):
-                variables.update(attributes)
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(variables))
-                futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr) for variable in variables]
-                for future in concurrent.futures.as_completed(futures):
-                    variable, metadata, attributes = future.result() # overwrites attribute set
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(variables) + len(attributes)))
+                var_futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr, False) for variable in variables]
+                attr_futures = [executor.submit(inspectThread, self, f'{group}/{attribute}', False, True) for attribute in attributes]
+                for future in concurrent.futures.as_completed(var_futures + attr_futures):
+                    variable, metadata, attributes, is_attr = future.result() # overwrites attribute set
                     element = isolateElement(variable, group)
-                    listing[element] = {'__metadata__': metadata}
-                    for attribute in attributes:
-                        listing[element][attribute] = attributes[attribute]
+                    if not is_attr:
+                        var_listing[element] = {'__metadata__': metadata}
+                        for attribute in attributes:
+                            var_listing[element][attribute] = attributes[attribute]
+                    else:
+                        attr_listing[element] = metadata # just the value of the attribute
 
         except RuntimeError as e:
             log.critical(f'H5Coro encountered an error listing the group {group}: {e}')
 
         # return results
         if w_inspect:
-            return listing
+            return var_listing, attr_listing
         else:
             return variables, attributes
 

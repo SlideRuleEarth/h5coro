@@ -28,7 +28,7 @@ class S3Driver:
         # construct path to resource
         self.resourcePath = list(filter(('').__ne__, resource.split('/')))
 
-        # apply credentials is supplied
+        # apply credentials if supplied
         if "profile" in credentials:
             self.session = boto3.Session(profile_name=credentials["profile"])
         elif "aws_access_key_id" in credentials and \
