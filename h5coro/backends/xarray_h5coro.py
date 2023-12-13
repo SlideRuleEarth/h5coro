@@ -12,8 +12,6 @@ import os
 
 from xarray.core.dataset import Dataset
 
-from pprint import pprint
-
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
     '''
@@ -47,35 +45,23 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=creds)
         
         # determine the variables and attributes in the specified group
-        var_paths, attr_paths = h5obj.listGroup(group, w_attr=True, w_inspect=False)
-        var_paths = [os.path.join(group, p) for p in var_paths]
-        attr_paths = [os.path.join(group, p) for p in attr_paths]
+        variables, group_attr = h5obj.listGroup(group, w_attr=True, w_inspect=True)
+        var_paths = [os.path.join(group, name) for name in variables.keys()]
         
         # submit data request for variables and attributes and create data view
-        var_promise = h5obj.readDatasets(var_paths, block=True)
-        attr_promise = h5obj.readDatasets(attr_paths, block=True)
-        view = H5View(var_promise)
-        view_attr = H5View(attr_promise)
+        promise = h5obj.readDatasets(var_paths, block=True)
+        view = H5View(promise)
         for step in group.split('/'):
             if step != '':  # First group will be '' if there was a leading `/` in the group path
                 view = view[step]
-                view_attr = view_attr[step]
-        
-        # Format the attributes associated with the user provided group path
-        toplevel_attrs = {}
-        for var in view_attr.keys():
-            toplevel_attrs[var] = view_attr[var]
         
         # Format the data variables (and coordinate variables)
         variable_dicts = {}
         coordinate_names = []
-        for var in view.keys(): 
-            # pull out attributes for that variable
-            info = h5obj.listGroup(os.path.join(group, var), w_attr=True, w_inspect=True)
-            
+        for var in view.keys():  
             # check dimensionality
-            if info['coordinates']['__metadata__'].ndims > 1:
-                # ignore the 2d variable
+            if variables[var]['__metadata__'].ndims > 1:
+                # ignore 2d variables
                 warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with'
                                'more than 1 dimension is not currently supported. This variable will be'
                                'dropped.'))
@@ -83,7 +69,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             else:
                 # check for coordinate variables and add any coordinates to the coordinate_names list
                 try:
-                    coord = re.split(';|,| |\n', info['DIMENSION_LIST']['coordinates'])
+                    coord = re.split(';|,| |\n', variables[var]['coordinates'])
                     coord = [c for c in coord if c]
                     for c in coord:
                         if c not in coordinate_names:
@@ -94,7 +80,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
 
                 # add the variable contents as a tuple to the data variables dictionary
                 # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
-                variable_dicts[var] = (coord[0], view[var], info['description'])
+                variable_dicts[var] = (coord[0], view[var], variables[var])
         
         # seperate out the coordinate variables from the data variables
         coords = {}
@@ -103,12 +89,12 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             coordinate = variable_dicts.pop(coord_name)
             # add the coordiante variable to the coords dictionary
             coords[coord_name] = coordinate
-            
+        
         return xr.Dataset(
-            variable_dicts,
-            coords = coords,
-            attrs = toplevel_attrs,
-        )
+                variable_dicts,
+                coords = coords,
+                attrs = group_attr,
+            )
 
     open_dataset_parameters = ["filename_or_obj", "drop_variables"]
 
