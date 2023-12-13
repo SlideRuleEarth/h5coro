@@ -49,12 +49,12 @@ class TestIcesat2:
 
     def test_list_group(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
-        group = h5obj.listGroup(ATL03_GROUP, w_attr=True, w_inspect=True)
-        assert len(group.keys()) == 15
-        assert 'dist_ph_along' in group
-        assert 'data_rate' in group
-        assert len(group["data_rate"]) == 3
-        assert group["weight_ph"]["valid_max"][0] == 255
+        variables, attributes = h5obj.listGroup(ATL03_GROUP, w_attr=True, w_inspect=True)
+        assert len(variables.keys()) == 13
+        assert 'dist_ph_along' in variables
+        assert 'data_rate' in attributes
+        assert type(attributes["data_rate"]) == str
+        assert variables["weight_ph"]["valid_max"][0] == 255
 
     def test_read_attribute(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
