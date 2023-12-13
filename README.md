@@ -86,18 +86,9 @@ The `H5Coro` class implements iteration over each dataset read.  The contents of
 
 ## xarray backend
 
-Right now the development of h5coro as a backend for xarray is in progress. To test out this functionality, you will need to:
+Right now the development of h5coro as a backend for xarray is in progress. To test out this functionality, all you need to do is install h5coro in the same environment as xarray. xarray should be able to find the h5coro backend.
 
-1. Install h5coro
-2. Clone a local copy of xarray (ex. `git clone <clone_url_for_xarray>`)
-3. Modify the `[options.entry_points]` section of the `setup.cfg` file to include the `xarray.backends` parameter: 
-
-```
-[options.entry_points]
-xarray.backends =
-    h5coro = h5coro.backends.xarray_h5coro:H5CoroBackendEntrypoint
-```
-4. Install your local version of xarray `pip install -e .` from inside the xarray folder.
+If working on this as a developer, simply install xarray in the same local development environment as you typically use.
 
 ## Licensing
 
