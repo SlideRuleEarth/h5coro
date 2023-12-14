@@ -80,10 +80,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
 
                 # add the variable contents as a tuple to the data variables dictionary
                 # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
-                # Manually setting delta_time as the delta_time coordinate
-                if var == 'delta_time':
-                    coord = ['delta_time']
-                variable_dicts[var] = (coord[0], view[var], variables[var])
+                variable_dicts[var] = (coord[0], view[var], variables[var])              
         
         # seperate out the coordinate variables from the data variables
         coords = {}
@@ -92,6 +89,14 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             coordinate = variable_dicts.pop(coord_name)
             # add the coordiante variable to the coords dictionary
             coords[coord_name] = coordinate
+        
+        # Ensure consistency of dimension coordinates
+        dimension_coordinates = [val[0] for val in variables_dicts.values()]
+        for coord_name, coordinate in coords:
+            # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
+            # is set to itself
+            if coord_name in dimension_coordinates:
+                coords[coord_name] = (coord_name, coordinate[1], coordinate[2])
         
         return xr.Dataset(
                 variable_dicts,
