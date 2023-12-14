@@ -91,8 +91,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             coords[coord_name] = coordinate
         
         # Ensure consistency of dimension coordinates
-        dimension_coordinates = [val[0] for val in variables_dicts.values()]
-        for coord_name, coordinate in coords:
+        dimension_coordinates = [val[0] for val in variable_dicts.values()]
+        for coord_name, coordinate in coords.items():
             # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
             # is set to itself
             if coord_name in dimension_coordinates:
