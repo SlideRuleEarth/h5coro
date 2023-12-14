@@ -26,7 +26,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         *,
         group,
         creds,  # TODO creds is required because there is an indirect error in h5coro if not
-        log_level='INFO',
+        log_level='ERROR',
+        col_convs={},
         drop_variables=None,
     ) -> Dataset:
         '''
@@ -94,7 +95,10 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
 
                 # add the variable contents as a tuple to the data variables dictionary
                 # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
-                variable_dicts[var] = (coord[0], view[var], info['description'])
+                if var in col_convs:
+                    variable_dicts[var] = (coord[0], col_convs[var](view[var]), info['description'])
+                else:
+                    variable_dicts[var] = (coord[0], view[var], info['description'])
         
         # seperate out the coordinate variables from the data variables
         coords = {}
