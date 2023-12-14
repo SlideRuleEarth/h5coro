@@ -36,53 +36,38 @@ Alternatively, you can also install h5coro using [pip](https://pip.pypa.io/en/st
 
 ```python
 # (1) import
-from h5coro import h5coro, s3driver, filedriver
+from h5coro import h5coro, s3driver
 
-# (2) configure
-h5coro.config(errorChecking=True, verbose=False, enableAttributes=False)
-
-# (3) create
+# (2) create
 h5obj = h5coro.H5Coro(f'{my_bucket}/{path_to_hdf5_file}', s3driver.S3Driver)
 
-# (4) read
+# (3) read
 datasets = [{'dataset': '/path/to/dataset1', 'startrow': 0, 'numrows': h5coro.ALL_ROWS},
             {'dataset': '/path/to/dataset2', 'startrow': 324, 'numrows': 50}]
-h5obj.readDatasets(datasets=datasets, block=True)
+promise = h5obj.readDatasets(datasets=datasets, block=True)
 
-# (5) display
-for dataset in h5obj:
-    print(dataset)
+# (4) display
+for variable in promise:
+    print(f'{variable}: {promise[variable]}')
 ```
 
 #### (1) Importing h5coro
-
 `h5coro`: the main module implementing the HDF5 reader object
 
 `s3driver`: the driver used to read HDF5 data from S3
 
-`filediver`: the driver used to read HDF5 data from a local file
-
-#### (2) Configuring h5coro
-The `h5coro.config` function is used to configure different aspects of the package that are then globally set for all future use of the package.
-
-`errorChecking`: bool, enables error checks while reading through an HDF5 file; recommended for the first time a dataset is attempting to be read, but comes at a slight performance penalty
-
-`verbose`: bool, enables system logs that report diagnostic messages; note that all errors raise the `FatalError` exception and don't require the **verbose** option
-
-`enableAttributes`: bool, enables reading attributes in the HDF5 as if they were a dataset; comes with a performance penalty
-
-#### (3) Create h5coro Object
+#### (2) Create h5coro Object
 The call to `h5coro.H5Coro` creates a reader object that opens up the HDF5 file, reads the start of the file, and is then ready to accept read requests.
 
 The calling application must have credentials to access the object in the specified S3 bucket.  **h5coro** uses `boto3`, so any credentials supplied via the standard AWS methods will work.  If credentials need to be supplied externally, then in the call to `h5coro.H5Coro` pass in an argument `credentials` as a dictionary with the following three fields: "aws_access_key_id", "aws_secret_access_key", "aws_session_token".
 
-#### (4) Read with h5coro Object
+#### (3) Read with h5coro Object
 The `H5Coro.read` function takes a list of dictionary objects that describe the datasets that need to be read in parallel.
 
 If the `block` parameter is set to True, then the code will wait for all of the datasets to be read before returning; otherwise, the code will return immediately and not until the dataset within the reader object is access will the code block.
 
-#### (5) Display the Datasets
-The `H5Coro` class implements iteration over each dataset read.  The contents of each dataset are supplied as `numpy` arrays.
+#### (4) Display the Datasets
+The h5coro promise is a dictionary of `numpy` arrays containing the values of the variables read, along with some additional logic that provides the ability to block while waiting for the data to be populated.
 
 ## xarray backend
 

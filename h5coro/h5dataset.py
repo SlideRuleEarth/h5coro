@@ -195,20 +195,13 @@ class H5Dataset:
                 buffer = bytearray(buffer_size)
 
                 # fill buffer with fill value (if provided)
-                if self.meta.fillsize > 0:
-                    fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
-                    for i in range(0, buffer_size, self.meta.fillsize):
-                        buffer[i:i+self.meta.fillsize] = fill_values
+#                if self.meta.fillsize > 0:
+#                    fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
+#                    for i in range(0, buffer_size, self.meta.fillsize):
+#                        buffer[i:i+self.meta.fillsize] = fill_values
 
                 # calculate data chunk buffer size
                 self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
-
-                # perform prefetch
-                if self.resourceObject.enablePrefetch:
-                    if buffer_offset < buffer_size:
-                        self.resourceObject.ioRequest(self.meta.address, buffer_offset + buffer_size, caching=False, prefetch=True)
-                    else:
-                        self.resourceObject.ioRequest(self.meta.address + buffer_offset, buffer_size, caching=False, prefetch=True)
 
                 # read b-tree
                 self.pos = self.meta.address
@@ -260,7 +253,7 @@ class H5Dataset:
 
                         # copy into new buffer
                         for k in range(cdimsizes[1]):
-                            fbuf[start + k] = buffer[bi]
+                            fbuf[int(start + k)] = buffer[bi]
                             bi += 1
 
                         # update indices
@@ -1096,7 +1089,7 @@ class H5Dataset:
 
             # read filter name length
             name_len = 0
-            if (version == 1) or (filter >= 256):
+            if (version == 1) or (filter_id >= 256):
                 name_len = self.readField(2)
 
             # read Filter parameters
