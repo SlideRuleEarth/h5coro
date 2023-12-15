@@ -43,20 +43,15 @@ class TestIcesat2:
 
     def test_inspect_variable(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
-        metadata, attributes = h5obj.inspectVariable(ATL03_DATASET, w_attr=True)
+        links, attributes, metadata = h5obj.inspectPath(ATL03_DATASET, w_attr=True)
         assert metadata.dimensions[0] == 20622551
         assert attributes['units'] == 'meters'
 
     def test_list_group(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
-        variables, attributes = h5obj.listGroup(ATL03_GROUP, w_attr=True, w_inspect=True)
+        variables, attributes, groups = h5obj.list(ATL03_GROUP, w_attr=True)
         assert len(variables.keys()) == 13
         assert 'dist_ph_along' in variables
         assert 'data_rate' in attributes
         assert type(attributes["data_rate"]) == str
         assert variables["weight_ph"]["valid_max"][0] == 255
-
-    def test_read_attribute(self):
-        h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
-        attribute = h5obj.readAttribute(ATL03_ATTRIBUTE)
-        assert attribute == "meters"

@@ -31,16 +31,24 @@ import h5coro
 from utils import args, credentials
 
 h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
-variables, attributes = h5obj.listGroup(args.group, w_attr=args.enableAttributes, w_inspect=args.inspect)
-if type(variables) == dict:
-    for variable, listing in variables.items():
-        print(f'{variable}:')
-        for key, value in listing.items():
-            print(f'  {key}: {value}')
-    for attribute, value in attributes.items():
-        print(f'[a] {attribute}: {value}')
-else:
-    for variable in variables:
-        print(f'{variable}')
-    for attribute in attributes:
-        print(f'[a] {attribute}')
+variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttributes)
+
+# list groups
+for group, listing in groups.items():
+    print(f'[g] {group}:')
+    for key, value in listing.items():
+        print(f'  {key}: {value}')
+
+# list variables
+for variable, listing in variables.items():
+    metadata = ""
+    if '__metadata__' in listing:
+        metadata = str(listing['__metadata__'])
+        del listing['__metadata__']
+    print(f'[v] {variable}: {metadata}')
+    for key, value in listing.items():
+        print(f'  {key}: {value}')
+
+# list attributes
+for attribute, value in attributes.items():
+    print(f'[a] {attribute}: {value}')

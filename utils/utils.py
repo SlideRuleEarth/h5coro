@@ -13,7 +13,6 @@ parser.add_argument('--slice','-s', nargs=2, type=int, default=[0,10])
 parser.add_argument('--profile','-p', type=str, default="default")
 parser.add_argument('--driver','-d', type=str, default="s3") # s3 or file
 parser.add_argument('--enableAttributes','-a', action='store_true', default=False)
-parser.add_argument('--inspect','-i', action='store_true', default=False)
 parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 parser.add_argument('--loglevel','-l', type=str, default="unset")
