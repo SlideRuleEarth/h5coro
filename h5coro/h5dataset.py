@@ -589,8 +589,14 @@ class H5Dataset:
         try:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
-            if msg_size == 0:
-                raise FatalError(f'invalid message size - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}')
+            # It is unclear why messages of size zero appear in the h5 files,
+            # but in cases where it appears, the code has been able to continue
+            # to successfully parse the file when the msg_type is zero; but
+            # when there are zero length messages of a non-nill type, it is possible
+            # a previous message has been padded and this code is not correctly picking
+            # up the padding.  Regardless, something has gone wrong and we must abort
+            if msg_type != 0 and msg_size == 0:
+                raise FatalError(f'Invalid Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}')
             if self.resourceObject.verbose:
                 log.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
