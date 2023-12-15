@@ -35,7 +35,7 @@ variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttribut
 
 # list groups
 for group, listing in groups.items():
-    print(f'[g] {group}:')
+    print(f'[g] {group}')
     for key, value in listing.items():
         print(f'  {key}: {value}')
 

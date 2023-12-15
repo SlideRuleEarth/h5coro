@@ -29,6 +29,7 @@
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
+from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 import concurrent.futures
 
@@ -56,7 +57,7 @@ def inspectThread(resourceObject, path, w_attr):
         return path, metadata, attributes
     except RuntimeError as e:
         log.warning(f'H5Coro encountered an error inspecting {path}: {e}')
-        return path, {}, {}
+        return path, H5Metadata(), {}
 
 def isolateElement(path, group):
     if path.startswith(group):
@@ -134,31 +135,27 @@ class H5Coro:
         attributes = {}
         metadata = None
 
-        try:
-            # read elements at path
-            H5Dataset(self, path, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
-    
-            # pull out links and attributes from pathAddresses
-            for _path in self.pathAddresses.keys():
-                element = isolateElement(_path, path)
-                if element != None:
-                    if _path in self.metadataTable and self.metadataTable[_path].isattribute:
-                        attributes[element] = None
-                    else:
-                        links.add(element)
+        # read elements at path
+        H5Dataset(self, path, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
 
-            # pull out metadata from metadataTable
-            if path in self.metadataTable:
-                metadata = self.metadataTable[path]
+        # pull out links and attributes from pathAddresses
+        for _path in self.pathAddresses.keys():
+            element = isolateElement(_path, path)
+            if element != None:
+                if _path in self.metadataTable and self.metadataTable[_path].isattribute:
+                    attributes[element] = None
+                else:
+                    links.add(element)
 
-            # read each attribute
-            attr_paths = [f'{path}/{attribute}' for attribute in attributes]
-            promise = self.readDatasets(attr_paths, enableAttributes=True)
-            for attribute in attributes:
-                attributes[attribute] = promise.datasets[f'{path}/{attribute}'].values
+        # pull out metadata from metadataTable
+        if path in self.metadataTable:
+            metadata = self.metadataTable[path]
 
-        except RuntimeError as e:
-            log.critical(f'H5Coro encountered an error inspecting the path {path}: {e}')
+        # read each attribute
+        attr_paths = [f'{path}/{attribute}' for attribute in attributes]
+        promise = self.readDatasets(attr_paths, enableAttributes=True)
+        for attribute in attributes:
+            attributes[attribute] = promise.datasets[f'{path}/{attribute}'].values
 
         # return results
         return links, attributes, metadata
@@ -176,7 +173,6 @@ class H5Coro:
 
         # get links and attributes at specified path
         links, attributes, _ = self.inspectPath(path, w_attr)
-
         # inspect each link to get metadata, attributes, group info, etc
         if len(links) > 0:
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
@@ -188,7 +184,7 @@ class H5Coro:
                     groups[element] = {}
                     for attr in attrs:
                         groups[element][attr] = attrs[attr]
-                else: # variable
+                elif metadata.type != None: # variable
                     variables[element] = {'__metadata__': metadata}
                     for attr in attrs:
                         variables[element][attr] = attrs[attr]

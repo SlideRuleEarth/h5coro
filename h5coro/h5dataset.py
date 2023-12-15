@@ -589,6 +589,8 @@ class H5Dataset:
         try:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
+            if msg_size == 0:
+                raise FatalError(f'invalid message size - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}')
             if self.resourceObject.verbose:
                 log.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
