@@ -34,6 +34,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         earthaccess Auth object
         log_level: indicates level of debugging output to produce. Passed to h5coro logger.config()
         parameter logLevel
+        col_convs: the conversion dictionary that is used for the delta_time conversion. conversion code 
+        for delta_time is in the datasets/icesat2.py module
         '''
         # set h5coro config to info
         logger.config(log_level)
@@ -49,59 +51,70 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         variables, group_attr, groups = h5obj.list(group, w_attr=True)
         var_paths = [os.path.join(group, name) for name in variables.keys()]
         
-        # submit data request for variables and attributes and create data view
-        promise = h5obj.readDatasets(var_paths, block=True)
-        view = H5View(promise)
-        for step in group.split('/'):
-            if step != '':  # First group will be '' if there was a leading `/` in the group path
-                view = view[step]
-        
-        # Format the data variables (and coordinate variables)
+        # if there were variables in that group, retrieve them
         variable_dicts = {}
-        coordinate_names = []
-        for var in view.keys():  
-            # check dimensionality
-            if variables[var]['__metadata__'].ndims > 1:
-                # ignore 2d variables
-                warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with'
-                               'more than 1 dimension is not currently supported. This variable will be'
-                               'dropped.'))
-                continue
-            else:
-                # check for coordinate variables and add any coordinates to the coordinate_names list
-                try:
-                    coord = re.split(';|,| |\n', variables[var]['coordinates'])
-                    coord = [c for c in coord if c]
-                    for c in coord:
-                        if c not in coordinate_names:
-                            coordinate_names.append(c) 
-                except KeyError:
-                    # if no coordinates were listed for that variable then set it's coordinate as itself
-                    coord = [var]
-
-                # add the variable contents as a tuple to the data variables dictionary
-                # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
-                if var in col_convs:
-                    variable_dicts[var] = (coord[0], col_convs[var](view[var]), variables[var])
-                else:
-                    variable_dicts[var] = (coord[0], view[var], variables[var])
-
-        
-        # seperate out the coordinate variables from the data variables
         coords = {}
-        for coord_name in coordinate_names:
-            # drop the coordiante variable from variable_dicts
-            coordinate = variable_dicts.pop(coord_name)
-            # add the coordiante variable to the coords dictionary
-            coords[coord_name] = coordinate
+        if var_paths:  
+            # submit data request for variables and attributes and create data view
+            promise = h5obj.readDatasets(var_paths, block=True)
+            view = H5View(promise)
+            for step in group.split('/'):
+                if step != '':  # First group will be '' if there was a leading `/` in the group path
+                    view = view[step]
         
-        # Ensure consistency of dimension coordinates
-        dimension_coordinates = [val[0] for val in variable_dicts.values()]
-        for coord_name, coordinate in coords.items():
-            # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
-            # is set to itself
-            if coord_name in dimension_coordinates:
-                coords[coord_name] = (coord_name, coordinate[1], coordinate[2])
+            # Format the data variables (and coordinate variables)
+            coordinate_names = []
+            for var in view.keys():  
+                # check dimensionality
+                if variables[var]['__metadata__'].ndims > 1:
+                    # ignore 2d variables
+                    warnings.warn(
+                        ('Variable {} has more than 1 dimension. Reading variables with'
+                         'more than 1 dimension is not currently supported. This variable will be'
+                         'dropped.'.format(var))
+                    )
+                    continue
+                else:
+                    # check for coordinate variables and add any coordinates to the coordinate_names list
+                    try:
+                        coord = re.split(';|,| |\n', variables[var]['coordinates'])
+                        coord = [c for c in coord if c]
+                        for c in coord:
+                            if c not in coordinate_names:
+                                coordinate_names.append(c) 
+                    except KeyError:
+                        # if no coordinates were listed for that variable then set it's coordinate as itself
+                        coord = [var]
+
+                    # add the variable contents as a tuple to the data variables dictionary
+                    # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
+                    if var in col_convs:
+                        # convert delta_time column to 
+                        variable_dicts[var] = (coord[0], col_convs[var](view[var]), variables[var])
+                    else:
+                        data = view[var]
+                        if isinstance(data, np.ndarray):
+                            variable_dicts[var] = (coord[0], data, variables[var])
+                        else:
+                            warnings.warn(
+                                'Unable to read variable {} from the file. Skipping this variable'.format(var)
+                            )
+
+
+            # seperate out the coordinate variables from the data variables
+            for coord_name in coordinate_names:
+                # drop the coordiante variable from variable_dicts
+                coordinate = variable_dicts.pop(coord_name)
+                # add the coordiante variable to the coords dictionary
+                coords[coord_name] = coordinate
+
+            # Ensure consistency of dimension coordinates
+            dimension_coordinates = [val[0] for val in variable_dicts.values()]
+            for coord_name, coordinate in coords.items():
+                # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
+                # is set to itself
+                if coord_name in dimension_coordinates:
+                    coords[coord_name] = (coord_name, coordinate[1], coordinate[2])
         
         return xr.Dataset(
                 variable_dicts,
