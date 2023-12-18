@@ -34,6 +34,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         earthaccess Auth object
         log_level: indicates level of debugging output to produce. Passed to h5coro logger.config()
         parameter logLevel
+        col_convs: the conversion dictionary that is used for the delta_time conversion. conversion code 
+        for delta_time is in the datasets/icesat2.py module
         '''
         # set h5coro config to info
         logger.config(log_level)
@@ -66,9 +68,11 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 # check dimensionality
                 if variables[var]['__metadata__'].ndims > 1:
                     # ignore 2d variables
-                    warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with'
-                                   'more than 1 dimension is not currently supported. This variable will be'
-                                   'dropped.'))
+                    warnings.warn(
+                        ('Variable {} has more than 1 dimension. Reading variables with'
+                         'more than 1 dimension is not currently supported. This variable will be'
+                         'dropped.'.format(var))
+                    )
                     continue
                 else:
                     # check for coordinate variables and add any coordinates to the coordinate_names list
@@ -85,9 +89,16 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                     # add the variable contents as a tuple to the data variables dictionary
                     # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
                     if var in col_convs:
+                        # convert delta_time column to 
                         variable_dicts[var] = (coord[0], col_convs[var](view[var]), variables[var])
                     else:
-                        variable_dicts[var] = (coord[0], view[var], variables[var])
+                        data = view[var]
+                        if isinstance(data, np.ndarray):
+                            variable_dicts[var] = (coord[0], data, variables[var])
+                        else:
+                            warnings.warn(
+                                'Unable to read variable {} from the file. Skipping this variable'.format(var)
+                            )
 
 
             # seperate out the coordinate variables from the data variables
