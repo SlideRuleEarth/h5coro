@@ -31,6 +31,26 @@ Alternatively, you can also install h5coro using [pip](https://pip.pypa.io/en/st
 ```bash
     pip install h5coro
 ```
+#### xarray backend
+
+To install `h5coro` as a backend to xarray, you will need to clone the xarray repository:
+
+```bash
+git clone https://github.com/pydata/xarray.git
+```
+
+and update the `pyproject.toml` file in the root of the repository by adding the following lines:
+
+```yaml
+[project.entry-points."xarray.backends"]
+h5coro = "h5coro.backends.xarray_h5coro:H5CoroBackendEntrypoint"
+```
+
+and then reinstalling `xarray` into your current Python environment by running the following command at the root of the `xarray` repository:
+
+```bash
+pip install .
+```
 
 ## Example Usage
 
@@ -68,12 +88,6 @@ If the `block` parameter is set to True, then the code will wait for all of the 
 
 #### (4) Display the Datasets
 The h5coro promise is a dictionary of `numpy` arrays containing the values of the variables read, along with some additional logic that provides the ability to block while waiting for the data to be populated.
-
-## xarray backend
-
-Right now the development of h5coro as a backend for xarray is in progress. To test out this functionality, all you need to do is install h5coro in the same environment as xarray. xarray should be able to find the h5coro backend.
-
-If working on this as a developer, simply install xarray in the same local development environment as you typically use.
 
 ## Licensing
 

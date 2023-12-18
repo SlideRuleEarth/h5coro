@@ -46,7 +46,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=creds)
         
         # determine the variables and attributes in the specified group
-        variables, group_attr = h5obj.listGroup(group, w_attr=True, w_inspect=True)
+        variables, group_attr, groups = h5obj.list(group, w_attr=True)
         var_paths = [os.path.join(group, name) for name in variables.keys()]
         
         # submit data request for variables and attributes and create data view
