@@ -40,7 +40,7 @@ def datasetThread(resourceObject, dataset, startRow=0, numRows=H5Dataset.ALL_ROW
     try:
         return H5Dataset(resourceObject, dataset, startRow, numRows, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
     except RuntimeError as e:
-        log.warning(f'H5Coro encountered error reading {dataset}: {e}')
+        log.warn(f'H5Coro encountered error reading {dataset}: {e}')
         return H5Dataset(resourceObject, dataset, startRow, numRows, makeNull=True, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
 def resultThread(promise, futures):

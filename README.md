@@ -157,7 +157,7 @@ We follow a standard Forking Workflow for code changes and additions. Submitted 
 | ___Bogus Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Group Info Message___  | <span style="color:red">No</span> | | Version 0 |
 | ___Filter Pipeline Message___  | <span style="color:green">Yes</span> | Version 1, 2 | |
-| ___Attribute Message___  | <span style="color:blue">Partial</span> | Version 1 | Version 2, 3 |
+| ___Attribute Message___  | <span style="color:blue">Partial</span> | Version 1, 2, 3 | Shared message support for v3 |
 | ___Object Comment Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Object Modification Time (Old) Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Shared Message Table Message___  | <span style="color:red">No</span> | | Version 0 |

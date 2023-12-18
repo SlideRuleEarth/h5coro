@@ -365,7 +365,7 @@ class H5Dataset:
             block = resourceObject.ioRequest(12 + (3 * resourceObject.offsetSize), resourceObject.offsetSize)
             root_group_offset = struct.unpack(f'<{SIZE_2_FORMAT[resourceObject.offsetSize]}', block)[0]
 
-        # print file information
+        # display file information
         if resourceObject.verbose:
             log.info(f'File Information @0x{root_group_offset:x}')
             log.info(f'Size of Offsets:      {resourceObject.offsetSize}')
@@ -1145,7 +1145,7 @@ class H5Dataset:
         PAD_SIZE            = 8
         starting_position   = self.pos
         version             = self.readField(1)
-        self.pos           += 1
+        v2_3_flags          = self.readField(1)
         name_size           = self.readField(2)
         datatype_size       = self.readField(2)
         dataspace_size      = self.readField(2)
@@ -1156,17 +1156,36 @@ class H5Dataset:
             log.info(f'Version:              {version}')
 
         # check version
-        if self.resourceObject.errorChecking and (version != 1):
+        if self.resourceObject.errorChecking and (version != 1) and (version != 2) and (version != 3):
             raise FatalError(f'invalid attribute version: {version}')
 
-        # update message sizes
-        datatype_size += ((PAD_SIZE - (datatype_size % PAD_SIZE)) % PAD_SIZE)
-        dataspace_size += ((PAD_SIZE - (dataspace_size % PAD_SIZE)) % PAD_SIZE)
+        # check shared messages
+        if self.resourceObject.errorChecking and (version != 1) and (v2_3_flags != 0):
+            raise FatalError(f'unsupported shared messages for attribute: {v2_3_flags}')
+
+        # character encoding
+        char_encoding = 'utf-8'
+        if version == 3:
+            name_character_set_encoding = self.readField(1)
+            if name_character_set_encoding == 0:
+                char_encoding = 'ascii'
+            elif name_character_set_encoding == 1:
+                char_encoding = 'utf-8'
+            elif self.resourceObject.errorChecking:
+                raise FatalError(f'invalid character set encoding: {name_character_set_encoding}')
+
+        # pad out message sizes (version 1 only)
+        if version == 1:
+            datatype_size += ((PAD_SIZE - (datatype_size % PAD_SIZE)) % PAD_SIZE)
+            dataspace_size += ((PAD_SIZE - (dataspace_size % PAD_SIZE)) % PAD_SIZE)
 
         # read attribute name
-        attr_name = self.readArray(name_size).tobytes().decode('utf-8')[:-1]
-        self.pos += (PAD_SIZE - (name_size % PAD_SIZE)) % PAD_SIZE; # align to next x-byte boundary
+        attr_name = self.readArray(name_size).tobytes().decode(char_encoding).strip('\0')
         attr_path = '/'.join(self.datasetPath[:dlvl] + [attr_name])
+
+        # pad out name size (version 1 only)
+        if version == 1:
+            self.pos += (PAD_SIZE - (name_size % PAD_SIZE)) % PAD_SIZE; # align to next x-byte boundary
 
         # display
         if self.resourceObject.verbose:

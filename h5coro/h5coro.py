@@ -56,7 +56,7 @@ def inspectThread(resourceObject, path, w_attr):
         _, attributes, metadata = resourceObject.inspectPath(path, w_attr=w_attr)
         return path, metadata, attributes
     except RuntimeError as e:
-        log.warning(f'H5Coro encountered an error inspecting {path}: {e}')
+        log.warn(f'H5Coro encountered an error inspecting {path}: {e}')
         return path, H5Metadata(), {}
 
 def isolateElement(path, group):
