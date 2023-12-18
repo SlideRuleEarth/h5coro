@@ -28,27 +28,13 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import h5coro
+import xarray as xr
+import earthaccess
+from h5coro.datasets import icesat2
 from utils import args, credentials
 
-h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
-variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttributes)
+col_convs = {"delta_time": icesat2.to_datetime}
+auth = earthaccess.login()
+ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, col_convs=col_convs, creds=auth)
 
-# list groups
-for group, listing in groups.items():
-    print(f'[g] {group}')
-    for key, value in listing.items():
-        print(f'  {key}: {value}')
-
-# list variables
-for variable, listing in variables.items():
-    metadata = ""
-    if '__metadata__' in listing:
-        metadata = str(listing['__metadata__'])
-        del listing['__metadata__']
-    print(f'[v] {variable}: {metadata}')
-    for key, value in listing.items():
-        print(f'  {key}: {value}')
-
-# list attributes
-for attribute, value in attributes.items():
-    print(f'[a] {attribute}: {value}')
+print(ds)

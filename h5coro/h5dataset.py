@@ -285,8 +285,8 @@ class H5Dataset:
             self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
         elif self.meta.type == H5Metadata.STRING_TYPE:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
-        elif self.resourceObject.verbose:
-            log.error(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
+        else:
+            log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
     #######################
     # readField
@@ -589,6 +589,14 @@ class H5Dataset:
         try:
             return msg_handler_table[msg_type](msg_size, obj_hdr_flags, dlvl)
         except KeyError:
+            # It is unclear why messages of size zero appear in the h5 files,
+            # but in cases where it appears, the code has been able to continue
+            # to successfully parse the file when the msg_type is zero; but
+            # when there are zero length messages of a non-nill type, it is possible
+            # a previous message has been padded and this code is not correctly picking
+            # up the padding.  Regardless, something has gone wrong and we must abort
+            if msg_type != 0 and msg_size == 0:
+                raise FatalError(f'Invalid Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}')
             if self.resourceObject.verbose:
                 log.info(f'<<Skipped Message - {self.dataset}[{dlvl}] @0x{self.pos:x}: 0x{msg_type:x}, {msg_size}>>')
             self.pos += msg_size
@@ -762,7 +770,7 @@ class H5Dataset:
         # Reference
         elif meta.type == H5Metadata.COMPOUND_TYPE:
             meta.signedval = True
-            log.error(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
+            log.warn(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
             self.pos = starting_position + msg_size
         # Reference
         elif meta.type == H5Metadata.REFERENCE_TYPE:
@@ -1535,8 +1543,9 @@ class H5Dataset:
         if io_filter_len > 0:
             filter_root_dblk   = self.readField(self.resourceObject.lengthSize) # Size of Filtered Root Direct Block
             filter_mask        = self.readField(4) # I/O Filter Mask
-            log.info(f'Filtered Direct Block:{filter_root_dblk}')
-            log.info(f'I/O Filter Mask:      {filter_mask}')
+            if self.resourceObject.verbose:
+                log.info(f'Filtered Direct Block:{filter_root_dblk}')
+                log.info(f'I/O Filter Mask:      {filter_mask}')
             raise FatalError(f'Filtering unsupported on fractal heap: {io_filter_len}')
             # self.readMessage(FILTER_MSG, io_filter_len, obj_hdr_flags) # this currently populates filter for dataset
 

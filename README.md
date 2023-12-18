@@ -31,6 +31,26 @@ Alternatively, you can also install h5coro using [pip](https://pip.pypa.io/en/st
 ```bash
     pip install h5coro
 ```
+#### xarray backend
+
+To install `h5coro` as a backend to xarray, you will need to clone the xarray repository:
+
+```bash
+git clone https://github.com/pydata/xarray.git
+```
+
+and update the `pyproject.toml` file in the root of the repository by adding the following lines:
+
+```yaml
+[project.entry-points."xarray.backends"]
+h5coro = "h5coro.backends.xarray_h5coro:H5CoroBackendEntrypoint"
+```
+
+and then reinstalling `xarray` into your current Python environment by running the following command at the root of the `xarray` repository:
+
+```bash
+pip install .
+```
 
 ## Example Usage
 

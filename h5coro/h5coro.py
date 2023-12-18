@@ -29,6 +29,7 @@
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
+from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 import concurrent.futures
 
@@ -50,17 +51,13 @@ ENABLE_PREFETCH_DEFAULT = False
 # H5Coro Functions
 ###############################################################################
 
-def inspectThread(resourceObject, variable, w_attr, is_attr):
+def inspectThread(resourceObject, path, w_attr):
     try:
-        if not is_attr:
-            metadata, attributes = resourceObject.inspectVariable(variable, w_attr=w_attr)
-            return variable, metadata, attributes, is_attr
-        else:
-            value = resourceObject.readAttribute(variable)
-            return variable, value, {}, is_attr
+        _, attributes, metadata = resourceObject.inspectPath(path, w_attr=w_attr)
+        return path, metadata, attributes
     except RuntimeError as e:
-        log.warning(f'H5Coro encountered an error inspecting {variable}: {e}')
-        return variable, {}, {}, False
+        log.warning(f'H5Coro encountered an error inspecting {path}: {e}')
+        return path, H5Metadata(), {}
 
 def isolateElement(path, group):
     if path.startswith(group):
@@ -130,85 +127,70 @@ class H5Coro:
         return H5Promise(self, datasetTable, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
     #######################
-    # inspectVariable
+    # readPath
     #######################
-    def inspectVariable(self, variable, w_attr=True):
-        variable = massagePath(variable)
-        metadata = None
+    def inspectPath(self, path, w_attr=True):
+        # initialize return values
+        links = set()
         attributes = {}
+        metadata = None
 
-        if w_attr:
-            # get metadata and attributes associated with variable
-            _, attrs = self.listGroup(variable, w_attr)
-            if variable in self.metadataTable:
-                metadata = self.metadataTable[variable]
-            # read each attribute
-            attr_paths = [f'{variable}/{attr}' for attr in attrs]
-            promise = self.readDatasets(attr_paths, enableAttributes=True)
-            for attr in attrs:
-                attributes[attr] = promise.datasets[f'{variable}/{attr}'].values
-        else:
-            # get metadata for variable
-            promise = self.readDatasets([variable], block=True, earlyExit=True, metaOnly=True, enableAttributes=False)
-            metadata = promise.datasets[variable].meta
- 
-        # return results
-        return metadata, attributes
+        # read elements at path
+        H5Dataset(self, path, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
 
-    #######################
-    # listGroup
-    #######################
-    def listGroup(self, group, w_attr=True, w_inspect=False):
-        group = massagePath(group)
-        variables = set()
-        attributes = set()
-        var_listing = {}
-        attr_listing = {}
+        # pull out links and attributes from pathAddresses
+        for _path in self.pathAddresses.keys():
+            element = isolateElement(_path, path)
+            if element != None:
+                if _path in self.metadataTable and self.metadataTable[_path].isattribute:
+                    attributes[element] = None
+                else:
+                    links.add(element)
 
-        try:
-            # read elements in group
-            H5Dataset(self, group, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
-    
-            # populate variables and attributes by filtering pathAddresses 
-            # for all entries starting with group string
-            for path in self.pathAddresses.keys():
-                element = isolateElement(path, group)
-                if element != None:
-                    if path in self.metadataTable and self.metadataTable[path].isattribute:
-                        attributes.add(element)
-                    else:
-                        variables.add(element)
+        # pull out metadata from metadataTable
+        if path in self.metadataTable:
+            metadata = self.metadataTable[path]
 
-            # inspect each variable to get datatype, dimensions, and optionally the attributes
-            if w_inspect and (len(variables) > 0 or len(attributes) > 0):
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(variables) + len(attributes)))
-                var_futures = [executor.submit(inspectThread, self, f'{group}/{variable}', w_attr, False) for variable in variables]
-                attr_futures = [executor.submit(inspectThread, self, f'{group}/{attribute}', False, True) for attribute in attributes]
-                for future in concurrent.futures.as_completed(var_futures + attr_futures):
-                    variable, metadata, attributes, is_attr = future.result() # overwrites attribute set
-                    element = isolateElement(variable, group)
-                    if not is_attr:
-                        var_listing[element] = {'__metadata__': metadata}
-                        for attribute in attributes:
-                            var_listing[element][attribute] = attributes[attribute]
-                    else:
-                        attr_listing[element] = metadata # just the value of the attribute
-
-        except RuntimeError as e:
-            log.critical(f'H5Coro encountered an error listing the group {group}: {e}')
+        # read each attribute
+        attr_paths = [f'{path}/{attribute}' for attribute in attributes]
+        promise = self.readDatasets(attr_paths, enableAttributes=True)
+        for attribute in attributes:
+            attributes[attribute] = promise.datasets[f'{path}/{attribute}'].values
 
         # return results
-        if w_inspect:
-            return var_listing, attr_listing
-        else:
-            return variables, attributes
+        return links, attributes, metadata
 
     #######################
-    # readAttribute
+    # list
     #######################
-    def readAttribute(self, attribute):
-        promise = self.readDatasets([attribute], block=True, enableAttributes=True)
-        return promise[attribute]
+    def list(self, path, w_attr=True):
+        # sanatize inputs
+        path = massagePath(path)
+
+        # initialize return values
+        variables = {}
+        groups = {}
+
+        # get links and attributes at specified path
+        links, attributes, _ = self.inspectPath(path, w_attr)
+        # inspect each link to get metadata, attributes, group info, etc
+        if len(links) > 0:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
+            futures = [executor.submit(inspectThread, self, f'{path}/{link}', w_attr) for link in links]
+            for future in concurrent.futures.as_completed(futures):
+                name, metadata, attrs = future.result() # overwrites attribute set
+                element = isolateElement(name, path)
+                if metadata == None: # group
+                    groups[element] = {}
+                    for attr in attrs:
+                        groups[element][attr] = attrs[attr]
+                elif metadata.type != None: # variable
+                    variables[element] = {'__metadata__': metadata}
+                    for attr in attrs:
+                        variables[element][attr] = attrs[attr]
+
+        # return results
+        return variables, attributes, groups
 
     #######################
     # ioRequest
