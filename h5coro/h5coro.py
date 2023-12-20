@@ -117,7 +117,7 @@ class H5Coro:
         for dataset in datasets:
             if type(dataset) == str:
                 dataset = massagePath(dataset)
-                datasetTable[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
+                datasetTable[dataset] = {"dataset": dataset, "hyperslice": []}
             else:
                 dataset["dataset"] = massagePath(dataset["dataset"])
                 datasetTable[dataset["dataset"]] = dataset
