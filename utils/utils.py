@@ -17,6 +17,7 @@ parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 parser.add_argument('--loglevel','-l', type=str, default="unset")
 parser.add_argument('--daac','-q', type=str, default="NSIDC")
+parser.add_argument('--perf','-r', action='store_true', default=False)
 args,_ = parser.parse_known_args()
 
 # Conifugre I/O Driver #
@@ -42,3 +43,19 @@ if args.daac != "None":
     credentials = { "aws_access_key_id": s3_creds["accessKeyId"],
                     "aws_secret_access_key": s3_creds["secretAccessKey"],
                     "aws_session_token": s3_creds["sessionToken"] }
+
+# Execute and Profile #
+def execute(main, pfilename='perf.bin'):
+    if args.perf:
+        from cProfile import Profile
+        from pstats import SortKey, Stats
+        with Profile() as profile:
+            main()
+            stats = Stats(profile)
+            print(stats
+                .strip_dirs()
+                .sort_stats(SortKey.CALLS)
+                .print_stats())
+            stats.dump_stats(pfilename)
+    else:
+        main()

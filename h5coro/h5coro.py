@@ -85,7 +85,6 @@ class H5Coro:
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
         verbose = VERBOSE_DEFAULT
-
     ):
         self.resource = resource
         self.driver = driver_class(resource, credentials)

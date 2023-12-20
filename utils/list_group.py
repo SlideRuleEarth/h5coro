@@ -28,27 +28,31 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import h5coro
-from utils import args, credentials
+from utils import args, credentials, execute
 
-h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
-variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttributes)
+def main():
+    # read object
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
+    variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttributes)
 
-# list groups
-for group, listing in groups.items():
-    print(f'[g] {group}')
-    for key, value in listing.items():
-        print(f'  {key}: {value}')
+    # list groups
+    for group, listing in groups.items():
+        print(f'[g] {group}')
+        for key, value in listing.items():
+            print(f'  {key}: {value}')
 
-# list variables
-for variable, listing in variables.items():
-    metadata = ""
-    if '__metadata__' in listing:
-        metadata = str(listing['__metadata__'])
-        del listing['__metadata__']
-    print(f'[v] {variable}: {metadata}')
-    for key, value in listing.items():
-        print(f'  {key}: {value}')
+    # list variables
+    for variable, listing in variables.items():
+        metadata = ""
+        if '__metadata__' in listing:
+            metadata = str(listing['__metadata__'])
+            del listing['__metadata__']
+        print(f'[v] {variable}: {metadata}')
+        for key, value in listing.items():
+            print(f'  {key}: {value}')
 
-# list attributes
-for attribute, value in attributes.items():
-    print(f'[a] {attribute}: {value}')
+    # list attributes
+    for attribute, value in attributes.items():
+        print(f'[a] {attribute}: {value}')
+
+execute(main)

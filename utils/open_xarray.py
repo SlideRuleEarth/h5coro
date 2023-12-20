@@ -31,10 +31,12 @@ import h5coro
 import xarray as xr
 import earthaccess
 from h5coro.datasets import icesat2
-from utils import args, credentials
+from utils import args, execute
 
-col_convs = {"delta_time": icesat2.to_datetime}
-auth = earthaccess.login()
-ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, col_convs=col_convs, creds=auth)
+def main():
+    col_convs = {"delta_time": icesat2.to_datetime}
+    auth = earthaccess.login()
+    ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, col_convs=col_convs, creds=auth)
+    print(ds)
 
-print(ds)
+execute(main)
