@@ -102,7 +102,7 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, hyperslice, makeNull=False, *, earlyExit, metaOnly, enableAttributes, enableFill):
+    def __init__(self, resourceObject, dataset, hyperslice, makeNull=False, enableFill=False, *, earlyExit, metaOnly, enableAttributes):
         # initialize object
         self.resourceObject         = resourceObject
         self.earlyExit              = earlyExit
