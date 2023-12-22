@@ -182,45 +182,78 @@ class H5Dataset:
         for d in range(self.meta.ndims):
             elements_in_dimension = self.hyperslice[d][1] - self.hyperslice[d][0]
             if elements_in_dimension > 0:
-                self.num_elements *= elements_in_dimension
+                self.numElements *= elements_in_dimension
 
         # calculate size of buffer
-        buffer_size = self.meta.typeSize * self.num_elements
+        buffer_size = self.meta.typeSize * self.numElements
+        if buffer_size <= 0:
+            log.warn(f'empty read: typeSize={self.meta.typeSize}, numElements={self.numElements}')
+            return
 
-        # calculate buffer start */
-        buffer_offset = row_size * self.datasetStartRow
+        # ###################################
+        # read compact and contiguous layouts
+        # ###################################
+        if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
+            # build serialized size of each dimension
+            # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
+            dim_size = [self.meta.typeSize for _ in range(self.meta.ndims)]
+            for d in range(self.meta.ndims-2, -1, -1):
+                dim_size[d] *= self.meta.dimensions[d] * dim_size[d+1] 
 
-        # read dataset
-        if buffer_size > 0:
-            if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
-                data_addr = self.meta.address + buffer_offset
-                buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
-            elif self.meta.layout == self.CHUNKED_LAYOUT:
-                # chunk layout specific error checks
-                if self.resourceObject.errorChecking:
-                    if self.meta.elementSize != self.meta.typeSize:
-                        raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
-                    elif self.meta.chunkElements <= 0:
-                        raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
+            # initialize dimension indices
+            dim_index = [i[0] for i in self.hyperslice] # initialize the dimension indices to the start index of each hyperslice
+            read_size = dim_size[-1] * (self.hyperslice[-1][1] - self.hyperslice[-1][0]) # size of data to read each time
+            dst_offset = 0 # offset into destination buffer for data
 
-                # allocate and initialize buffer
-                buffer = bytearray(buffer_size)
+            # read each hyperslice
+            while dim_index[0] < self.hyperslice[0][1]: # while the first dimension index has not traversed its range
 
-                # fill buffer with fill value (if provided and if enabled)
-                if self.enableFill and self.meta.fillsize > 0:
-                    fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
-                    for i in range(0, buffer_size, self.meta.fillsize):
-                        buffer[i:i+self.meta.fillsize] = fill_values
+                # calculate source offset
+                src_offset = 0
+                for d in range(len(dim_index)):
+                    src_offset += (dim_index[d] * dim_size[d])
 
-                # calculate data chunk buffer size
-                self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
+                # perform read
+                buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(self.meta.address + src_offset, read_size, caching=False)
+                dst_offset += read_size
 
-                # read b-tree
-                self.pos = self.meta.address
-                self.readBTreeV1(buffer, buffer_offset, dataset_level)
+                # go to next set of indices
+                dim_index[-1] += 1
+                i = len(dim_index) - 1
+                while i > 0 and dim_index[i] == self.hyperslice[i][1]:  # while the level being examined is at the last index
+                    dim_index[i] = self.hyperslice[i][0]                # set index back to the beginning of hyperslice
+                    dim_index[i - 1] += 1                               # bump the previous index to the next element in dimension
+                    i -= 1                                              # go to previous dimension
 
-            elif self.resourceObject.errorChecking:
-                raise FatalError(f'invalid data layout: {self.meta.layout}')
+        # ###################################
+        # read chunked layouts
+        # ###################################
+        elif self.meta.layout == self.CHUNKED_LAYOUT:
+            # chunk layout specific error checks
+            if self.resourceObject.errorChecking:
+                if self.meta.elementSize != self.meta.typeSize:
+                    raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
+                elif self.meta.chunkElements <= 0:
+                    raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
+
+            # allocate and initialize buffer
+            buffer = bytearray(buffer_size)
+
+            # fill buffer with fill value (if provided and if enabled)
+            if self.enableFill and self.meta.fillsize > 0:
+                fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
+                for i in range(0, buffer_size, self.meta.fillsize):
+                    buffer[i:i+self.meta.fillsize] = fill_values
+
+            # calculate data chunk buffer size
+            self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
+
+            # read b-tree
+            self.pos = self.meta.address
+            self.readBTreeV1(buffer, dataset_level)
+
+        elif self.resourceObject.errorChecking:
+            raise FatalError(f'invalid data layout: {self.meta.layout}')
 
         # populate data
         if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
@@ -1709,12 +1742,19 @@ class H5Dataset:
         return self.pos - starting_position
 
     #######################
+    # hypersliceIntersection
+    #######################
+    def hypersliceIntersection(self, chunk_slice):
+        for d in range(self.meta.ndims):
+            if chunk_slice[d][1] < self.hyperslice[d][0] or chunk_slice[d][0] > self.hyperslice[d][1]:
+                return False
+        return True
+
+    #######################
     # readBTreeV1
     #######################
-    def readBTreeV1(self, buffer, buffer_offset, dlvl):
+    def readBTreeV1(self, buffer, dlvl):
         starting_position = self.pos
-        data_key1 = self.datasetStartRow
-        data_key2 = self.datasetStartRow + self.datasetNumRows - 1
 
         # display
         if self.resourceObject.verbose:
@@ -1750,42 +1790,39 @@ class H5Dataset:
         for e in range(entries_used):
             child_addr  = self.readField(self.resourceObject.offsetSize)
             next_node   = self.readBTreeNodeV1(self.meta.ndims)
-            child_key1  = curr_node['row_key']
-            child_key2  = next_node['row_key'] # there is always +1 keys
-            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
-                child_key2 = self.meta.dimensions[0]
+
+#
+#   NOT SURE WHY THIS IS HERE
+#
+#            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
+#                child_key2 = self.meta.dimensions[0]
+
+            # construct chunk slice
+            chunk_slice = [(e1, e2) for e1, e2 in zip(curr_node['slice'], next_node['slice'])]
 
             # display
             if self.resourceObject.verbose:
                 log.debug(f'Entry <{node_level}>:            {e}')
                 log.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
                 log.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
-                log.debug(f'Chunk Key:            {child_key1} | {child_key2}')
-                log.debug(f'Data Key:             {data_key1} | {data_key2}')
-                log.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
+                log.debug(f'Hyperslice:           {self.hyperslice}')
+                log.debug(f'Chunk Slice:          {chunk_slice}')
                 log.debug(f'Child Address:        0x{child_addr:x}')
 
             # check inclusion
-            if  (data_key1  >= child_key1 and data_key1  <  child_key2) or \
-                (data_key2  >= child_key1 and data_key2  <  child_key2) or \
-                (child_key1 >= data_key1  and child_key1 <= data_key2)  or \
-                (child_key2 >  data_key1  and child_key2 <  data_key2):
+            if self.hypersliceIntersection(chunk_slice):
                 # process child entry
                 if node_level > 0:
                     return_position = self.pos
                     self.pos = child_addr
-                    self.readBTreeV1(buffer, buffer_offset, dlvl)
+                    self.readBTreeV1(buffer, dlvl)
                     self.pos = return_position
-                else:
-                    # calculate chunk location
-                    chunk_offset = 0
-                    for i in range(self.meta.ndims):
-                        slice_size = curr_node['slice'][i] * self.meta.typeSize
-                        for k in range(i):
-                            slice_size *= self.meta.chunkDimensions[k]
-                        for j in range(i + 1, self.meta.ndims):
-                            slice_size *= self.meta.dimensions[j]
-                        chunk_offset += slice_size
+                elif self.meta.ndims == 0:
+                    pass # TBD: NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
+                elif self.meta.ndims == 1:
+                    # calculate offsets
+                    buffer_offset = self.meta.typeSize * self.hyperslice[0][0]
+                    chunk_offset = curr_node['slice'][0] * self.meta.typeSize
 
                     # calculate buffer index - offset into data buffer to put chunked data
                     buffer_index = 0
@@ -1848,6 +1885,11 @@ class H5Dataset:
                     else:
                         chunk_offset_addr = child_addr + chunk_index
                         buffer[buffer_index:buffer_index+chunk_bytes] = self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes)
+                elif self.meta.ndims > 1:
+                    #
+                    # TBD: THIS IS WHAT NEEDS TO BE FIGURED OUT!!!!!
+                    #
+                    pass
 
             # goto next key
             curr_node = next_node
@@ -1870,12 +1912,6 @@ class H5Dataset:
         if self.resourceObject.errorChecking and (trailing_zero % self.meta.typeSize != 0):
             raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
 
-        # set node key
-        if ndims > 0:
-            node['row_key'] = node['slice'][0]
-        else:
-            node['row_key'] = 0
-
         # return copy of node
         return node
 
@@ -1894,9 +1930,9 @@ class H5Dataset:
         output = bytearray(output_size)
         dst_index = 0
         shuffle_block_size = int(len(input) / type_size)
-        num_elements = int(output_size / type_size)
+        elements_to_shuffle = int(output_size / type_size)
         start_element = int(output_offset / type_size)
-        for element_index in range(start_element, start_element + num_elements):
+        for element_index in range(start_element, start_element + elements_to_shuffle):
             for val_index in range(0, type_size):
                 src_index = (val_index * shuffle_block_size) + element_index
                 output[dst_index] = input[src_index]
