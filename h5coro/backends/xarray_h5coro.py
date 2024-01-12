@@ -63,8 +63,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             # check dimensionality
             if variables[var]['__metadata__'].ndims > 1:
                 # ignore 2d variables
-                warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with'
-                               'more than 1 dimension is not currently supported. This variable will be'
+                warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with '
+                               'more than 1 dimension is not currently supported. This variable will be '
                                'dropped.'))
                 continue
             else:

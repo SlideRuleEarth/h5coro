@@ -102,7 +102,7 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, hyperslice, makeNull=False, enableFill=False, *, earlyExit, metaOnly, enableAttributes):
+    def __init__(self, resourceObject, dataset, hyperslice=None, makeNull=False, enableFill=False, *, earlyExit, metaOnly, enableAttributes):
         # initialize object
         self.resourceObject         = resourceObject
         self.earlyExit              = earlyExit
@@ -112,6 +112,7 @@ class H5Dataset:
         self.pos                    = self.resourceObject.rootAddress
         self.currObjHdrPos          = 0
         self.numElements            = 1 # recalculated below
+        self.shape                  = [] # recalculated below
         self.dataset                = dataset
         self.hyperslice             = hyperslice
         self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
@@ -178,11 +179,12 @@ class H5Dataset:
                (self.hyperslice[d][0] < 0) or (self.hyperslice[d][1] < 0):
                     raise FatalError(f'invalid hyperslice, must provide as list of valid ranges, got {self.hyperslice}')
 
-        # calculate number of elements
+        # calculate shape and number of elements
         for d in range(self.meta.ndims):
             elements_in_dimension = self.hyperslice[d][1] - self.hyperslice[d][0]
             if elements_in_dimension > 0:
                 self.numElements *= elements_in_dimension
+            self.shape.append(elements_in_dimension)
 
         # calculate size of buffer
         buffer_size = self.meta.typeSize * self.numElements
@@ -194,36 +196,43 @@ class H5Dataset:
         # read compact and contiguous layouts
         # ###################################
         if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
-            # build serialized size of each dimension
-            # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
-            dim_size = [self.meta.typeSize for _ in range(self.meta.ndims)]
-            for d in range(self.meta.ndims-2, -1, -1):
-                dim_size[d] *= self.meta.dimensions[d] * dim_size[d+1] 
+            if self.meta.ndims == 0:
+                data_addr = self.meta.address
+                buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
+            else:
+                # allocate buffer
+                buffer = bytearray(buffer_size)
 
-            # initialize dimension indices
-            dim_index = [i[0] for i in self.hyperslice] # initialize the dimension indices to the start index of each hyperslice
-            read_size = dim_size[-1] * (self.hyperslice[-1][1] - self.hyperslice[-1][0]) # size of data to read each time
-            dst_offset = 0 # offset into destination buffer for data
+                # build serialized size of each dimension
+                # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
+                dim_size = [self.meta.typeSize for _ in range(self.meta.ndims)]
+                for d in range(self.meta.ndims-2, -1, -1):
+                    dim_size[d] *= self.meta.dimensions[d] * dim_size[d+1] 
 
-            # read each hyperslice
-            while dim_index[0] < self.hyperslice[0][1]: # while the first dimension index has not traversed its range
+                # initialize dimension indices
+                dim_index = [i[0] for i in self.hyperslice] # initialize the dimension indices to the start index of each hyperslice
+                read_size = dim_size[-1] * (self.hyperslice[-1][1] - self.hyperslice[-1][0]) # size of data to read each time
+                dst_offset = 0 # offset into destination buffer for data
 
-                # calculate source offset
-                src_offset = 0
-                for d in range(len(dim_index)):
-                    src_offset += (dim_index[d] * dim_size[d])
+                # read each hyperslice
+                while dim_index[0] < self.hyperslice[0][1]: # while the first dimension index has not traversed its range
 
-                # perform read
-                buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(self.meta.address + src_offset, read_size, caching=False)
-                dst_offset += read_size
+                    # calculate source offset
+                    src_offset = 0
+                    for d in range(len(dim_index)):
+                        src_offset += (dim_index[d] * dim_size[d])
 
-                # go to next set of indices
-                dim_index[-1] += 1
-                i = len(dim_index) - 1
-                while i > 0 and dim_index[i] == self.hyperslice[i][1]:  # while the level being examined is at the last index
-                    dim_index[i] = self.hyperslice[i][0]                # set index back to the beginning of hyperslice
-                    dim_index[i - 1] += 1                               # bump the previous index to the next element in dimension
-                    i -= 1                                              # go to previous dimension
+                    # perform read
+                    buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(self.meta.address + src_offset, read_size, caching=False)
+                    dst_offset += read_size
+
+                    # go to next set of indices
+                    dim_index[-1] += 1
+                    i = len(dim_index) - 1
+                    while i > 0 and dim_index[i] == self.hyperslice[i][1]:  # while the level being examined is at the last index
+                        dim_index[i] = self.hyperslice[i][0]                # set index back to the beginning of hyperslice
+                        dim_index[i - 1] += 1                               # bump the previous index to the next element in dimension
+                        i -= 1                                              # go to previous dimension
 
         # ###################################
         # read chunked layouts
@@ -260,6 +269,8 @@ class H5Dataset:
             elements = int(buffer_size / self.meta.typeSize)
             datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
             self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
+            if self.meta.ndims > 1:
+                self.values = self.values.reshape(self.shape)
         elif self.meta.type == H5Metadata.STRING_TYPE:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         else:
