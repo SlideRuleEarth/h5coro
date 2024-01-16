@@ -35,4 +35,5 @@ def main():
     promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
     for variable in promise:
         print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
+
 execute(main)

@@ -192,47 +192,18 @@ class H5Dataset:
             log.warn(f'empty read: typeSize={self.meta.typeSize}, numElements={self.numElements}')
             return
 
+        # allocate buffer
+        if self.meta.ndims > 0:
+            buffer = bytearray(buffer_size)
+
         # ###################################
         # read compact and contiguous layouts
         # ###################################
         if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
             if self.meta.ndims == 0:
-                data_addr = self.meta.address
-                buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
+                buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
             else:
-                # allocate buffer
-                buffer = bytearray(buffer_size)
-
-                # build serialized size of each dimension
-                # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
-                dim_size = [self.meta.typeSize for _ in range(self.meta.ndims)]
-                for d in range(self.meta.ndims-2, -1, -1):
-                    dim_size[d] *= self.meta.dimensions[d] * dim_size[d+1] 
-
-                # initialize dimension indices
-                dim_index = [i[0] for i in self.hyperslice] # initialize the dimension indices to the start index of each hyperslice
-                read_size = dim_size[-1] * (self.hyperslice[-1][1] - self.hyperslice[-1][0]) # size of data to read each time
-                dst_offset = 0 # offset into destination buffer for data
-
-                # read each hyperslice
-                while dim_index[0] < self.hyperslice[0][1]: # while the first dimension index has not traversed its range
-
-                    # calculate source offset
-                    src_offset = 0
-                    for d in range(len(dim_index)):
-                        src_offset += (dim_index[d] * dim_size[d])
-
-                    # perform read
-                    buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(self.meta.address + src_offset, read_size, caching=False)
-                    dst_offset += read_size
-
-                    # go to next set of indices
-                    dim_index[-1] += 1
-                    i = len(dim_index) - 1
-                    while i > 0 and dim_index[i] == self.hyperslice[i][1]:  # while the level being examined is at the last index
-                        dim_index[i] = self.hyperslice[i][0]                # set index back to the beginning of hyperslice
-                        dim_index[i - 1] += 1                               # bump the previous index to the next element in dimension
-                        i -= 1                                              # go to previous dimension
+                self.readSlice(buffer, self.shape, self.hyperslice, self.meta.address, self.meta.dimensions, self.hyperslice)
 
         # ###################################
         # read chunked layouts
@@ -244,9 +215,6 @@ class H5Dataset:
                     raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
                 elif self.meta.chunkElements <= 0:
                     raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
-
-            # allocate and initialize buffer
-            buffer = bytearray(buffer_size)
 
             # fill buffer with fill value (if provided and if enabled)
             if self.enableFill and self.meta.fillsize > 0:
@@ -1762,6 +1730,66 @@ class H5Dataset:
         return True
 
     #######################
+    # hypersliceSubset
+    #######################
+    def hypersliceSubset(self, chunk_slice):
+        subset = []
+        for d in range(self.meta.ndims):
+            subset.append((max(chunk_slice[d][0], self.hyperslice[d][0]), min(chunk_slice[d][1], self.hyperslice[d][1])))
+        return subset
+
+    #######################
+    # readSlice
+    #######################
+    def readSlice(self, output_buffer, output_dimensions, output_slice, input_buffer, input_dimensions, input_slice):
+
+        # get number of dimensions
+        ndims = len(input_dimensions)
+
+        # build serialized size of each intput and output dimension
+        # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
+        input_dim_size = [self.meta.typeSize for _ in range(ndims)]
+        output_dim_size = [self.meta.typeSize for _ in range(ndims)]
+        for d in range(ndims-2, -1, -1):
+            input_dim_size[d] *= input_dimensions[d] * input_dim_size[d+1] 
+            output_dim_size[d] *= output_dimensions[d] * output_dim_size[d+1] 
+
+        # initialize dimension indices
+        input_dim_index = [i[0] for i in input_slice] # initialize to the start index of each input_slice
+        output_dim_index = [i[0] for i in output_slice] # initialize to the start index of each output_slice
+
+        # calculate amount to read each time
+        read_size = input_dim_size[-1] * (input_slice[-1][1] - input_slice[-1][0]) # size of data to read each time
+
+        # read each input_slice
+        while input_dim_index[0] < input_slice[0][1]: # while the first dimension index has not traversed its range
+
+            # calculate source offset
+            src_offset = 0
+            for d in range(ndims):
+                src_offset += (input_dim_index[d] * input_dim_size[d])
+
+            # calculate destination offset
+            dst_offset = 0
+            for d in range(ndims):
+                dst_offset += (output_dim_index[d] * output_dim_size[d])
+
+            # perform read
+            if type(input_buffer) == int: 
+                input_address = input_buffer # treat as an address
+                output_buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(input_address + src_offset, read_size, caching=False)
+            else:
+                output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset+read_size]
+
+            # go to next set of indices
+            input_dim_index[-1] += 1
+            i = len(input_dim_index) - 1
+            while i > 0 and input_dim_index[i] == input_slice[i][1]:    # while the level being examined is at the last index
+                input_dim_index[i] = input_slice[i][0]                  # set index back to the beginning of hyperslice
+                input_dim_index[i - 1] += 1                             # bump the previous index to the next element in dimension
+                i -= 1                                                  # go to previous dimension
+
+    #######################
     # readBTreeV1
     #######################
     def readBTreeV1(self, buffer, dlvl):
@@ -1828,8 +1856,11 @@ class H5Dataset:
                     self.pos = child_addr
                     self.readBTreeV1(buffer, dlvl)
                     self.pos = return_position
+                
                 elif self.meta.ndims == 0:
-                    pass # TBD: NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
+                    log.warn(f'Unexpected chunked read of a zero dimensional dataset')
+                    pass # NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
+                
                 elif self.meta.ndims == 1:
                     # calculate offsets
                     buffer_offset = self.meta.typeSize * self.hyperslice[0][0]
@@ -1860,29 +1891,29 @@ class H5Dataset:
                     if self.resourceObject.verbose:
                         log.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.meta.typeSize)})')
                         log.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.meta.typeSize)})')
-                        log.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})')
+                        log.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})\n')
 
                     # read chunk
                     if self.meta.filter[self.meta.DEFLATE_FILTER]:
 
                         # read data into chunk filter buffer (holds the compressed data)
-                        self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
+                        chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
 
                         # inflate directly into data buffer
                         if (chunk_bytes == self.dataChunkBufferSize) and (not self.meta.filter[self.meta.SHUFFLE_FILTER]):
-                            buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
+                            buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(chunk_buffer)
 
                         # inflate into data chunk buffer */
                         else:
-                            dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer)
+                            chunk_buffer = self.inflateChunk(chunk_buffer)
 
                             # shuffle data chunk buffer into data buffer
                             if self.meta.filter[self.meta.SHUFFLE_FILTER]:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(dataChunkBuffer, chunk_index, chunk_bytes, self.meta.typeSize)
+                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(chunk_buffer, chunk_index, chunk_bytes, self.meta.typeSize)
 
                             # copy data chunk buffer into data buffer
                             else:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = dataChunkBuffer[chunk_index:chunk_index+chunk_bytes]
+                                buffer[buffer_index:buffer_index+chunk_bytes] = chunk_buffer[chunk_index:chunk_index+chunk_bytes]
 
                     # check filter options
                     elif self.resourceObject.errorChecking and self.meta.filter[self.meta.SHUFFLE_FILTER]:
@@ -1896,11 +1927,36 @@ class H5Dataset:
                     else:
                         chunk_offset_addr = child_addr + chunk_index
                         buffer[buffer_index:buffer_index+chunk_bytes] = self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes)
+                
                 elif self.meta.ndims > 1:
-                    #
-                    # TBD: THIS IS WHAT NEEDS TO BE FIGURED OUT!!!!!
-                    #
-                    pass
+
+                    # read entire chunk
+                    chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])        # read
+                    if self.meta.filter[self.meta.DEFLATE_FILTER]:                                           # if compressed
+                        chunk_buffer = self.inflateChunk(chunk_buffer)                                       #    decompress
+                        if self.meta.filter[self.meta.SHUFFLE_FILTER]:                                       # if shuffled
+                            self.shuffleChunk(chunk_buffer, 0, self.dataChunkBufferSize, self.meta.typeSize) #    reshuffle
+
+                    # get truncated slice to pull out of chunk 
+                    # (intersection of chunk_slice and hyperslice selection)
+                    chunk_slice_to_read = self.hypersliceSubset(chunk_slice)
+
+                    # build slice that is read
+                    read_slice = []
+                    for d in range(self.meta.ndims):
+                        x0 = abs(chunk_slice_to_read[d][0] - chunk_slice[d][0])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice[d][1])
+                        read_slice.append((x0, x1))
+
+                    # build slice that is written
+                    write_slice = []
+                    for d in range(self.meta.ndims):
+                        x0 = abs(chunk_slice_to_read[d][0] - self.hyperslice[d][0])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - self.hyperslice[d][1])
+                        write_slice.append((x0, x1))
+
+                    # read subset of chunk into return buffer
+                    self.readSlice(buffer, self.shape, write_slice, chunk_buffer, self.meta.chunkDimensions, read_slice)
 
             # goto next key
             curr_node = next_node
