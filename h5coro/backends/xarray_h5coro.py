@@ -23,8 +23,9 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         filename_or_obj,
         *,
         group,
-        creds,  # TODO creds is required because there is an indirect error in h5coro if not
+        credentials={},
         log_level='ERROR',
+        verbose=False,
         col_convs={},
         drop_variables=None,
     ) -> Dataset:
@@ -35,15 +36,11 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         log_level: indicates level of debugging output to produce. Passed to h5coro logger.config()
         parameter logLevel
         '''
-        # set h5coro config to info
+        # set h5coro logging level
         logger.config(log_level)
-        
-        # extract the s3 credentials dictionary if creds is an earthaccess Auth object
-        if isinstance(creds, earthaccess.auth.Auth):
-            creds = creds.get_s3_credentials(daac='NSIDC')
-        
+                
         # connect to the s3 object
-        h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=creds)
+        h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=credentials, verbose=verbose)
         
         # determine the variables and attributes in the specified group
         variables, group_attr, groups = h5obj.list(group, w_attr=True)
