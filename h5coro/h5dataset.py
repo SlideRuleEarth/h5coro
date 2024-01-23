@@ -1834,10 +1834,10 @@ class H5Dataset:
 #   NOT SURE WHY THIS IS HERE
 #
 #            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
-#                child_key2 = self.meta.dimensions[0]
+#                next_node['slice'] = self.meta.dimensions[0]
 
             # construct chunk slice
-            chunk_slice = [(e1, e2) for e1, e2 in zip(curr_node['slice'], next_node['slice'])]
+            chunk_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
 
             # display
             if self.resourceObject.verbose:
@@ -1846,6 +1846,7 @@ class H5Dataset:
                 log.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
                 log.debug(f'Hyperslice:           {self.hyperslice}')
                 log.debug(f'Chunk Slice:          {chunk_slice}')
+                log.debug(f'Chunk Dimensions:     {self.meta.chunkDimensions}')
                 log.debug(f'Child Address:        0x{child_addr:x}')
 
             # check inclusion

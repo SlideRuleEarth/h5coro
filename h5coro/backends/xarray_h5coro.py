@@ -57,31 +57,23 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         variable_dicts = {}
         coordinate_names = []
         for var in view.keys():  
-            # check dimensionality
-            if variables[var]['__metadata__'].ndims > 1:
-                # ignore 2d variables
-                warnings.warn((f'Variable {var} has more than 1 dimension. Reading variables with '
-                               'more than 1 dimension is not currently supported. This variable will be '
-                               'dropped.'))
-                continue
-            else:
-                # check for coordinate variables and add any coordinates to the coordinate_names list
-                try:
-                    coord = re.split(';|,| |\n', variables[var]['coordinates'])
-                    coord = [c for c in coord if c]
-                    for c in coord:
-                        if c not in coordinate_names:
-                            coordinate_names.append(c) 
-                except KeyError:
-                    # if no coordinates were listed for that variable then set it's coordinate as itself
-                    coord = [var]
+            # check for coordinate variables and add any coordinates to the coordinate_names list
+            try:
+                coord = re.split(';|,| |\n', variables[var]['coordinates'])
+                coord = [c for c in coord if c]
+                for c in coord:
+                    if c not in coordinate_names:
+                        coordinate_names.append(c) 
+            except KeyError:
+                # if no coordinates were listed for that variable then set it's coordinate as itself
+                coord = [var]
 
-                # add the variable contents as a tuple to the data variables dictionary
-                # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
-                if var in col_convs:
-                    variable_dicts[var] = (coord[0], col_convs[var](view[var]), variables[var])
-                else:
-                    variable_dicts[var] = (coord[0], view[var], variables[var])
+            # add the variable contents as a tuple to the data variables dictionary
+            # (use only the first coordinate since xarray doesn't except more coordinates that dimensions)
+            if var in col_convs:
+                variable_dicts[var] = (coord[0], col_convs[var](view[var]), variables[var])
+            else:
+                variable_dicts[var] = (coord[0], view[var], variables[var])
 
         
         # seperate out the coordinate variables from the data variables
