@@ -1830,12 +1830,6 @@ class H5Dataset:
             child_addr  = self.readField(self.resourceObject.offsetSize)
             next_node   = self.readBTreeNodeV1(self.meta.ndims)
 
-#
-#   NOT SURE WHY THIS IS HERE
-#
-#            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
-#                next_node['slice'] = self.meta.dimensions[0]
-
             # construct chunk slice
             chunk_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
 

@@ -134,13 +134,13 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 # move coordiante variable from data_vars to coords
                 coords[coord_name] = data_vars.pop(coord_name)
         
-#        # Ensure consistency of dimension coordinates
-#        dimension_coordinates = [val[0] for val in data_vars.values()]
-#        for coord_name, coordinate in coords.items():
-#            # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
-#            # is set to itself
-#            if coord_name in dimension_coordinates:
-#                coords[coord_name] = (coord_name, coordinate[1])
+        # Ensure consistency of dimension coordinates
+        dimension_coordinates = [val[0] for val in data_vars.values()]
+        for coord_name, coordinate in coords.items():
+            # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
+            # is set to itself
+            if coord_name in dimension_coordinates:
+                coords[coord_name] = (coord_name, coordinate[1])
         
         return xr.Dataset(
                 data_vars,
