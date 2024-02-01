@@ -37,7 +37,7 @@ def main():
     col_convs = {"delta_time": icesat2.to_datetime}
     auth = earthaccess.login()
     creds = auth.get_s3_credentials(daac=args.daac)
-    ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, col_convs=col_convs, credentials=creds, log_level=args.loglevel, verbose=args.verbose)
+    ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, pick_variables=args.pick, col_convs=col_convs, credentials=creds, log_level=args.loglevel, verbose=args.verbose)
     print(ds)
 
 execute(main)
