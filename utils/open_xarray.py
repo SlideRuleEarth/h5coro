@@ -27,14 +27,16 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import h5coro
 import xarray as xr
 import earthaccess
 from h5coro.datasets import icesat2
 from utils import args, execute
 
 def main():
-    col_convs = {"delta_time": icesat2.to_datetime}
+    if args.conversions:
+        col_convs = {"delta_time": icesat2.to_datetime}
+    else:
+        col_convs = {}
     auth = earthaccess.login()
     creds = auth.get_s3_credentials(daac=args.daac)
     ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, pick_variables=args.pick, col_convs=col_convs, credentials=creds, log_level=args.loglevel, verbose=args.verbose)

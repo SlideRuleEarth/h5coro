@@ -31,7 +31,7 @@ from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
-import concurrent.futures
+from concurrent.futures import as_completed, ThreadPoolExecutor
 
 ###############################################################################
 # CONSTANTS
@@ -174,9 +174,9 @@ class H5Coro:
         links, attributes, _ = self.inspectPath(path, w_attr)
         # inspect each link to get metadata, attributes, group info, etc
         if len(links) > 0:
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
+            executor = ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
             futures = [executor.submit(inspectThread, self, f'{path}/{link}', w_attr) for link in links]
-            for future in concurrent.futures.as_completed(futures):
+            for future in as_completed(futures):
                 name, metadata, attrs = future.result() # overwrites attribute set
                 element = isolateElement(name, path)
                 if metadata == None: # group

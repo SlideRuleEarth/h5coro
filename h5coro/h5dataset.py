@@ -34,7 +34,6 @@ import struct
 import zlib
 import ctypes
 import numpy
-import time
 
 ###############################################################################
 # CONSTANTS
