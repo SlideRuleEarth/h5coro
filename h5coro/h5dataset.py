@@ -30,6 +30,7 @@
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 from datetime import datetime
+from multiprocessing import shared_memory, Process
 import struct
 import zlib
 import ctypes
@@ -61,7 +62,14 @@ class FatalError(RuntimeError):
     pass
 
 ###############################################################################
-# H5Dataset Class
+# LOCAL FUNCTIONS
+###############################################################################
+
+def BTreeReader(dataset, buffer, level):
+    dataset.readBTreeV1(buffer, level)
+
+###############################################################################
+# H5DATASET CLASS
 ###############################################################################
 
 class H5Dataset:
@@ -192,7 +200,12 @@ class H5Dataset:
             return
 
         # allocate buffer
-        if self.meta.ndims > 0:
+        if self.resourceObject.multiProcess:
+            smem = None
+            if self.meta.ndims > 0:
+                smem = shared_memory.SharedMemory(create=True, size=buffer_size)
+                buffer = smem.buf
+        else:
             buffer = bytearray(buffer_size)
 
         # ###################################
@@ -226,7 +239,12 @@ class H5Dataset:
 
             # read b-tree
             self.pos = self.meta.address
-            self.readBTreeV1(buffer, dataset_level)
+            if self.resourceObject.multiProcess:
+                reader = Process(target=BTreeReader, args=(self, buffer, dataset_level))
+                reader.start()
+                reader.join()
+            else:
+                self.readBTreeV1(buffer, dataset_level)
 
         elif self.resourceObject.errorChecking:
             raise FatalError(f'invalid data layout: {self.meta.layout}')
@@ -242,6 +260,16 @@ class H5Dataset:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         else:
             log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
+
+# TODO: 
+# Currently reporting "BufferError: cannot close exported pointers exist" when trying to unlink(), but
+# if not unlinking, then it reports "multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: 
+# There appear to be 1 leaked shared_memory objects to clean up at shutdown"
+        # clean up shared memory
+#        if smem != None:
+#            buffer.release()
+#            smem.unlink()
+            
 
     #######################
     # readField

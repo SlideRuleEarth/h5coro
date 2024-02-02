@@ -33,13 +33,28 @@ from h5coro.datasets import icesat2
 from utils import args, execute
 
 def main():
+
+    # select conversions for xarray to perform
     if args.conversions:
         col_convs = {"delta_time": icesat2.to_datetime}
     else:
         col_convs = {}
+
+    # get credentials to access resources in Earthdata Cloud
     auth = earthaccess.login()
     creds = auth.get_s3_credentials(daac=args.daac)
-    ds = xr.open_dataset(args.granule, engine='h5coro', group=args.group, pick_variables=args.pick, col_convs=col_convs, credentials=creds, log_level=args.loglevel, verbose=args.verbose)
+
+    # open up resource as xarray
+    ds = xr.open_dataset( args.granule, 
+                          engine='h5coro', 
+                          group=args.group, 
+                          pick_variables=args.pick, 
+                          col_convs=col_convs, 
+                          credentials=creds, 
+                          log_level=args.loglevel, 
+                          verbose=args.verbose )
+
+    # display xarray
     print(ds)
 
 execute(main)

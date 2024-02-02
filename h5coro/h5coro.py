@@ -80,17 +80,19 @@ class H5Coro:
     #######################
     def __init__(self,
         resource,
-        driver_class,
+        driverClass,
         credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
-        verbose = VERBOSE_DEFAULT
+        verbose = VERBOSE_DEFAULT,
+        multiProcess = False
     ):
         self.resource = resource
-        self.driver = driver_class(resource, credentials)
+        self.driver = driverClass(resource, credentials)
 
         self.errorChecking = errorChecking
         self.verbose = verbose
+        self.multiProcess = multiProcess
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))

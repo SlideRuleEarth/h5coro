@@ -1,18 +1,11 @@
-import logging
-import re
-import warnings
-
-from xarray.backends import BackendEntrypoint
 from h5coro import h5coro, s3driver, filedriver, logger
 from h5coro.h5view import H5View
 from h5coro.h5promise import massagePath
 import xarray as xr
-import numpy as np
-import earthaccess # removed from requirements.txt
-import os
-
+from xarray.backends import BackendEntrypoint
 from xarray.core.dataset import Dataset
-
+import os
+import re
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
     '''
@@ -30,7 +23,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         col_convs={},
         col_coords={},
         pick_variables=None,
-        drop_variables=None,
+        drop_variables=None
     ) -> Dataset:
         '''
         Constructor for the H5CoroBackendEntrypoint class which extends the BackendEntrypoint class from xarray.
@@ -64,8 +57,14 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         # set h5coro logging level
         logger.config(log_level)
                 
+        # determine driver
+        if filename_or_obj.startswith("file://"):
+            driver = filedriver.FileDriver
+        else: # elif filename_or_obj.startswith("s3://"):
+            driver = s3driver.S3Driver
+
         # connect to the s3 object
-        h5obj = h5coro.H5Coro(filename_or_obj, s3driver.S3Driver, credentials=credentials, verbose=verbose)
+        h5obj = h5coro.H5Coro(filename_or_obj, driver, credentials=credentials, verbose=verbose, multiProcess=True)
         
         # determine the variables and attributes in the specified group
         variables, group_attr, _groups = h5obj.list(group, w_attr=True)

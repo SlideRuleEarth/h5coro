@@ -32,7 +32,7 @@ from utils import args, credentials, execute
 
 def main():
     # read object
-    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials, multiProcess=args.multiProcess)
     variables, attributes, groups= h5obj.list(args.group, w_attr=args.enableAttributes)
 
     # list groups

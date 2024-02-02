@@ -31,7 +31,7 @@ import h5coro
 from utils import args, credentials, execute
 
 def main():
-    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials, multiProcess=args.multiProcess)
     promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
     for variable in promise:
         print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')

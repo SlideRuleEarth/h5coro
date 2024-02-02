@@ -17,6 +17,7 @@ parser.add_argument('--driver',             '-d', type=str,             default=
 parser.add_argument('--enableAttributes',   '-a', action='store_true',  default=False)
 parser.add_argument('--checkErrors',        '-e', action='store_true',  default=False)
 parser.add_argument('--verbose',            '-v', action='store_true',  default=False)
+parser.add_argument('--multiProcess',       '-m', action='store_true',  default=False)
 parser.add_argument('--loglevel',           '-l', type=str,             default="unset")
 parser.add_argument('--daac',               '-q', type=str,             default="NSIDC")
 parser.add_argument('--perf',               '-r', action='store_true',  default=False)
