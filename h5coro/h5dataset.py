@@ -127,6 +127,7 @@ class H5Dataset:
         self.datasetFound           = False
         self.dataChunkBufferSize    = 0
         self.meta                   = H5Metadata()
+        self.sharedBuffer           = None
         self.values                 = None
 
         # check for null dataset
@@ -201,10 +202,9 @@ class H5Dataset:
 
         # allocate buffer
         if self.resourceObject.multiProcess:
-            smem = None
             if self.meta.ndims > 0:
-                smem = shared_memory.SharedMemory(create=True, size=buffer_size)
-                buffer = smem.buf
+                self.sharedBuffer = shared_memory.SharedMemory(create=True, size=buffer_size)
+                buffer = self.sharedBuffer.buf
         else:
             buffer = bytearray(buffer_size)
 
@@ -260,16 +260,15 @@ class H5Dataset:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         else:
             log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
-
-# TODO: 
-# Currently reporting "BufferError: cannot close exported pointers exist" when trying to unlink(), but
-# if not unlinking, then it reports "multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: 
-# There appear to be 1 leaked shared_memory objects to clean up at shutdown"
-        # clean up shared memory
-#        if smem != None:
-#            buffer.release()
-#            smem.unlink()
             
+    #######################
+    # Destructor
+    #######################
+    def __del__(self):
+        self.values = None
+        if self.sharedBuffer != None:
+            self.sharedBuffer.close()
+            self.sharedBuffer.unlink()
 
     #######################
     # readField
