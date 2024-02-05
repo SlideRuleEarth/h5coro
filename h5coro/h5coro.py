@@ -115,17 +115,17 @@ class H5Coro:
             return
 
         # make into dictionary
-        datasetTable = {}
+        dataset_table = {}
         for dataset in datasets:
             if type(dataset) == str:
                 dataset = massagePath(dataset)
-                datasetTable[dataset] = {"dataset": dataset, "hyperslice": []}
+                dataset_table[dataset] = {"dataset": dataset, "hyperslice": []}
             else:
                 dataset["dataset"] = massagePath(dataset["dataset"])
-                datasetTable[dataset["dataset"]] = dataset
+                dataset_table[dataset["dataset"]] = dataset
 
         # return promise
-        return H5Promise(self, datasetTable, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
+        return H5Promise(self, dataset_table, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
     #######################
     # readPath

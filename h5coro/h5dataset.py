@@ -171,7 +171,7 @@ class H5Dataset:
             if d < len(self.hyperslice):
                 if self.hyperslice[d] == None:
                     self.hyperslice[d] = (0, self.meta.dimensions[d])
-                elif len(self.hyperslice) == 2:
+                elif len(self.hyperslice[d]) == 2:
                     if self.hyperslice[d][0] == None:
                         self.hyperslice[d][0] = 0
                     if self.hyperslice[d][1] == None:
@@ -1777,9 +1777,9 @@ class H5Dataset:
         # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
         input_dim_step = [self.meta.typeSize for _ in range(ndims)]
         output_dim_step = [self.meta.typeSize for _ in range(ndims)]
-        for d in range(ndims-2, -1, -1):
-            input_dim_step[d] *= input_dimensions[d] * input_dim_step[d+1]
-            output_dim_step[d] *= output_dimensions[d] * output_dim_step[d+1]
+        for d in range(ndims-1, 0, -1):
+            input_dim_step[d-1] *= input_dimensions[d] * input_dim_step[d]
+            output_dim_step[d-1] *= output_dimensions[d] * output_dim_step[d]
 
         # initialize dimension indices
         input_dim_index = [i[0] for i in input_slice] # initialize to the start index of each input_slice
@@ -1805,12 +1805,20 @@ class H5Dataset:
             # copy data from input buffer to output buffer
             output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset+read_size]
 
-            # go to next set of indices
+            # go to next set of input indices
             input_dim_index[-1] += read_slice
             i = len(input_dim_index) - 1
             while i > 0 and input_dim_index[i] == input_slice[i][1]:    # while the level being examined is at the last index
                 input_dim_index[i] = input_slice[i][0]                  # set index back to the beginning of hyperslice
                 input_dim_index[i - 1] += 1                             # bump the previous index to the next element in dimension
+                i -= 1                                                  # go to previous dimension
+
+            # update output indices
+            output_dim_index[-1] += read_slice
+            i = len(output_dim_index) - 1
+            while i > 0 and output_dim_index[i] == output_slice[i][1]:  # while the level being examined is at the last index
+                output_dim_index[i] = output_slice[i][0]                # set index back to the beginning of hyperslice
+                output_dim_index[i - 1] += 1                            # bump the previous index to the next element in dimension
                 i -= 1                                                  # go to previous dimension
 
     #######################
@@ -1856,6 +1864,10 @@ class H5Dataset:
 
             # construct chunk slice
             chunk_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
+
+            # check for short-cutting
+            if self.hyperslice[0][1] < chunk_slice[0][0]:
+                break
 
             # display
             if self.resourceObject.verbose:
@@ -1964,14 +1976,14 @@ class H5Dataset:
                     read_slice = []
                     for d in range(self.meta.ndims):
                         x0 = abs(chunk_slice_to_read[d][0] - chunk_slice[d][0])
-                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice[d][1])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
                         read_slice.append((x0, x1))
 
                     # build slice that is written
                     write_slice = []
                     for d in range(self.meta.ndims):
                         x0 = abs(chunk_slice_to_read[d][0] - self.hyperslice[d][0])
-                        x1 = x0 + abs(chunk_slice_to_read[d][1] - self.hyperslice[d][1])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
                         write_slice.append((x0, x1))
 
                     # read subset of chunk into return buffer
