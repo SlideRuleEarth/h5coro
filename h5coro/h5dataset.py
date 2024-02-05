@@ -215,7 +215,8 @@ class H5Dataset:
             if self.meta.ndims == 0:
                 buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
             else:
-                self.readSlice(buffer, self.shape, self.hyperslice, self.meta.address, self.meta.dimensions, self.hyperslice)
+                compact_buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
+                self.readSlice(buffer, self.shape, self.hyperslice, compact_buffer, self.meta.dimensions, self.hyperslice)
 
         # ###################################
         # read chunked layouts
@@ -1772,43 +1773,40 @@ class H5Dataset:
         # get number of dimensions
         ndims = len(input_dimensions)
 
-        # build serialized size of each intput and output dimension
+        # build serialized size of each input and output dimension
         # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
-        input_dim_size = [self.meta.typeSize for _ in range(ndims)]
-        output_dim_size = [self.meta.typeSize for _ in range(ndims)]
+        input_dim_step = [self.meta.typeSize for _ in range(ndims)]
+        output_dim_step = [self.meta.typeSize for _ in range(ndims)]
         for d in range(ndims-2, -1, -1):
-            input_dim_size[d] *= input_dimensions[d] * input_dim_size[d+1] 
-            output_dim_size[d] *= output_dimensions[d] * output_dim_size[d+1] 
+            input_dim_step[d] *= input_dimensions[d] * input_dim_step[d+1]
+            output_dim_step[d] *= output_dimensions[d] * output_dim_step[d+1]
 
         # initialize dimension indices
         input_dim_index = [i[0] for i in input_slice] # initialize to the start index of each input_slice
         output_dim_index = [i[0] for i in output_slice] # initialize to the start index of each output_slice
 
         # calculate amount to read each time
-        read_size = input_dim_size[-1] * (input_slice[-1][1] - input_slice[-1][0]) # size of data to read each time
+        read_slice = input_slice[-1][1] - input_slice[-1][0]
+        read_size = input_dim_step[-1] * read_slice # size of data to read each time
 
         # read each input_slice
         while input_dim_index[0] < input_slice[0][1]: # while the first dimension index has not traversed its range
 
             # calculate source offset
             src_offset = 0
-            for d in range(ndims):
-                src_offset += (input_dim_index[d] * input_dim_size[d])
+            for d in range(ndims - 1):
+                src_offset += (input_dim_index[d] * input_dim_step[d])
 
             # calculate destination offset
             dst_offset = 0
-            for d in range(ndims):
-                dst_offset += (output_dim_index[d] * output_dim_size[d])
+            for d in range(ndims - 1):
+                dst_offset += (output_dim_index[d] * output_dim_step[d])
 
-            # perform read
-            if type(input_buffer) == int: 
-                input_address = input_buffer # treat as an address
-                output_buffer[dst_offset:dst_offset + read_size] = self.resourceObject.ioRequest(input_address + src_offset, read_size, caching=False)
-            else:
-                output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset+read_size]
+            # copy data from input buffer to output buffer
+            output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset+read_size]
 
             # go to next set of indices
-            input_dim_index[-1] += 1
+            input_dim_index[-1] += read_slice
             i = len(input_dim_index) - 1
             while i > 0 and input_dim_index[i] == input_slice[i][1]:    # while the level being examined is at the last index
                 input_dim_index[i] = input_slice[i][0]                  # set index back to the beginning of hyperslice
