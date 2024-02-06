@@ -20,6 +20,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         credentials={},
         log_level='ERROR',
         verbose=False,
+        multi_process=False,
         col_convs={},
         col_coords={},
         pick_variables=None,
@@ -40,6 +41,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                         DEBUG, INFO, WARNING, ERROR, CRITICAL
         verbose:        bool
                         flag indicating whether h5coro code should print lots of debug messages
+        multi_process:  bool
+                        flag indicating whether h5coro should run in multiprocessing mode
         col_convs:      dict
                         dictionary of conversion functions; the key is the column name and the signature
                         of the conversion function is (raw_value) => converted_value
@@ -59,12 +62,13 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 
         # determine driver
         if filename_or_obj.startswith("file://"):
+            filename_or_obj = filename_or_obj[len("file://"):]
             driver = filedriver.FileDriver
         else: # elif filename_or_obj.startswith("s3://"):
             driver = s3driver.S3Driver
 
         # connect to the s3 object
-        h5obj = h5coro.H5Coro(filename_or_obj, driver, credentials=credentials, verbose=verbose, multiProcess=True)
+        h5obj = h5coro.H5Coro(filename_or_obj, driver, credentials=credentials, verbose=verbose, multiProcess=multi_process)
         
         # determine the variables and attributes in the specified group
         variables, group_attr, _groups = h5obj.list(group, w_attr=True)

@@ -52,7 +52,8 @@ def main():
                           col_convs=col_convs, 
                           credentials=creds, 
                           log_level=args.loglevel, 
-                          verbose=args.verbose )
+                          verbose=args.verbose,
+                          multi_process=args.multiProcess )
 
     # display xarray
     print(ds)
