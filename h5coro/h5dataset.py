@@ -109,7 +109,7 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, hyperslice=None, makeNull=False, enableFill=False, *, earlyExit, metaOnly, enableAttributes):
+    def __init__(self, resourceObject, dataset, hyperslice=None, makeNull=False, enableFill=True, *, earlyExit, metaOnly, enableAttributes):
         # initialize object
         self.resourceObject         = resourceObject
         self.earlyExit              = earlyExit
@@ -237,6 +237,20 @@ class H5Dataset:
 
             # calculate data chunk buffer size
             self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
+
+            # calculate step size of each dimension in chunks
+            # ... for example a 12x12x12 cube of unsigned chars
+            # ... with a chunk size of 3x3x3 would be have 4x4x4 chunks
+            # ... the step size in chunks is then 16x4x1
+            self.dimensionsInChunks = [int(self.meta.dimensions[d] / self.meta.chunkDimensions[d]) for d in range(self.meta.ndims)]
+            self.chunkStepSize = [1 for _ in range(self.meta.ndims)]
+            for d in range(self.meta.ndims-1, 0, -1):
+                self.chunkStepSize[d-1] *= self.dimensionsInChunks[d] * self.chunkStepSize[d]
+
+            # calculate position of first and last element in hyperslice
+            hyperslice_in_chunks = [(int(self.hyperslice[d][0] / self.meta.chunkDimensions[d]), int(self.hyperslice[d][1] / self.meta.chunkDimensions[d])) for d in range(self.meta.ndims)]
+            self.hypersliceChunkStart = sum([hyperslice_in_chunks[d][0] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            self.hypersliceChunkEnd = sum([hyperslice_in_chunks[d][1] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
 
             # read b-tree
             self.pos = self.meta.address
@@ -1750,11 +1764,23 @@ class H5Dataset:
     #######################
     # hypersliceIntersection
     #######################
-    def hypersliceIntersection(self, chunk_slice):
-        for d in range(self.meta.ndims):
-            if chunk_slice[d][1] < self.hyperslice[d][0] or chunk_slice[d][0] > self.hyperslice[d][1]:
+    def hypersliceIntersection(self, node_slice, node_level):
+        if node_level == 0:
+            # check for intersection for all dimensions
+            for d in range(self.meta.ndims):
+                if node_slice[d][1] < self.hyperslice[d][0] or node_slice[d][0] >= self.hyperslice[d][1]:
+                    return False
+            return True
+        else: # node_level > 0
+            # calculate chunk of node slice
+            node_slice_in_chunks = [(int(node_slice[d][0] / self.meta.chunkDimensions[d]), int(node_slice[d][1] / self.meta.chunkDimensions[d])) for d in range(self.meta.ndims)]
+            # calculate element position
+            node_start = sum([node_slice_in_chunks[d][0] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            node_end = sum([node_slice_in_chunks[d][1] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            # check for intersection of position
+            if node_end < self.hypersliceChunkStart or node_start >= self.hypersliceChunkEnd:
                 return False
-        return True
+            return True
 
     #######################
     # hypersliceSubset
@@ -1862,25 +1888,29 @@ class H5Dataset:
             child_addr  = self.readField(self.resourceObject.offsetSize)
             next_node   = self.readBTreeNodeV1(self.meta.ndims)
 
-            # construct chunk slice
-            chunk_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
-
-            # check for short-cutting
-            if self.hyperslice[0][1] < chunk_slice[0][0]:
-                break
+            # construct node slice
+            if node_level > 0:
+                node_slice = [(start, stop) for start, stop in zip(curr_node['slice'], next_node['slice'])]
+            else:
+                node_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
 
             # display
             if self.resourceObject.verbose:
+                log.info(f'level={node_level}, entry={e+1} of {entries_used}, node_slice={node_slice}, curr_node={curr_node["slice"]}, next_node={next_node["slice"]}')
                 log.debug(f'Entry <{node_level}>:            {e}')
                 log.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
                 log.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
+                log.debug(f'Node Slice:           {curr_node["slice"]} | {next_node["slice"]}')
                 log.debug(f'Hyperslice:           {self.hyperslice}')
-                log.debug(f'Chunk Slice:          {chunk_slice}')
                 log.debug(f'Chunk Dimensions:     {self.meta.chunkDimensions}')
                 log.debug(f'Child Address:        0x{child_addr:x}')
 
+            # check for short-cutting
+            if self.meta.ndims <= 1 and self.hyperslice[0][1] < node_slice[0][0]:
+                break
+
             # check inclusion
-            if self.hypersliceIntersection(chunk_slice):
+            if self.hypersliceIntersection(node_slice, node_level):
                 # process child entry
                 if node_level > 0:
                     return_position = self.pos
@@ -1970,12 +2000,12 @@ class H5Dataset:
 
                     # get truncated slice to pull out of chunk 
                     # (intersection of chunk_slice and hyperslice selection)
-                    chunk_slice_to_read = self.hypersliceSubset(chunk_slice)
+                    chunk_slice_to_read = self.hypersliceSubset(node_slice)
 
                     # build slice that is read
                     read_slice = []
                     for d in range(self.meta.ndims):
-                        x0 = abs(chunk_slice_to_read[d][0] - chunk_slice[d][0])
+                        x0 = abs(chunk_slice_to_read[d][0] - node_slice[d][0])
                         x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
                         read_slice.append((x0, x1))
 

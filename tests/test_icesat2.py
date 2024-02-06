@@ -14,6 +14,7 @@ ATL06_DATASET = 'gt1r/land_ice_segments/h_li'
 ATL03_S3_OBJECT = "nsidc-cumulus-prod-protected/ATLAS/ATL03/006/2018/10/17/ATL03_20181017222812_02950102_006_02.h5"
 ATL03_ATTRIBUTE = 'gt2l/heights/h_ph/units'
 ATL03_DATASET = 'gt2l/heights/h_ph'
+ATL03_2D_DATASET = 'gt2l/heights/signal_conf_ph'
 ATL03_GROUP = 'gt2l/heights'
 
 @pytest.mark.region
@@ -55,3 +56,11 @@ class TestIcesat2:
         assert 'data_rate' in attributes
         assert type(attributes["data_rate"]) == str
         assert variables["weight_ph"]["valid_max"][0] == 255
+
+    def test_2d_var(self):
+        h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
+        promise = h5obj.readDatasets([{"dataset": ATL03_2D_DATASET, "hyperslice": [(0,10)]}], block=True, enableAttributes=False)
+        expected = [[0, -1, -1, -1, -1], [0, -1, -1, -1, -1]]
+        for row in range(len(expected)):
+            for column in range(len(expected[row])):
+                assert promise[ATL03_DATASET][row][column] == expected[row][column]
