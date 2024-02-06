@@ -63,4 +63,4 @@ class TestIcesat2:
         expected = [[0, -1, -1, -1, -1], [0, -1, -1, -1, -1]]
         for row in range(len(expected)):
             for column in range(len(expected[row])):
-                assert promise[ATL03_DATASET][row][column] == expected[row][column]
+                assert promise[ATL03_2D_DATASET][row][column] == expected[row][column]
