@@ -27,6 +27,8 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import os
+
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.h5metadata import H5Metadata
@@ -153,10 +155,10 @@ class H5Coro:
             metadata = self.metadataTable[path]
 
         # read each attribute
-        attr_paths = [f'{path}/{attribute}' for attribute in attributes]
+        attr_paths = [os.path.join(path, attribute) for attribute in attributes]
         promise = self.readDatasets(attr_paths, enableAttributes=True)
         for attribute in attributes:
-            attributes[attribute] = promise.datasets[f'{path}/{attribute}'].values
+            attributes[attribute] = promise.datasets[os.path.join(path, attribute)].values
 
         # return results
         return links, attributes, metadata
