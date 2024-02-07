@@ -544,7 +544,7 @@ class H5Dataset:
             self.pos += alignment_padding
             bytes_read += alignment_padding
             if self.resourceObject.errorChecking and (bytes_read != msg_size):
-                raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
+                raise FatalError(f'header v1 message of type {msg_type} different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
             if self.earlyExit and self.datasetFound:
@@ -1363,10 +1363,9 @@ class H5Dataset:
             else:
                 self.pos += 6
 
-        # return bytes read
-        bytes_read = self.resourceObject.offsetSize + self.resourceObject.lengthSize
-        self.pos = return_position + bytes_read
-        return bytes_read
+        # reset position and return bytes read
+        self.pos = return_position 
+        return return_position - starting_position
 
     #######################
     # attributeinfoMsgHandler
@@ -1443,8 +1442,8 @@ class H5Dataset:
         num_symbols = self.readField(2)
         for _ in range(num_symbols):
             # read symbol entry
-            link_name_offset    = self.readField(self.resourceObject.offsetsize)
-            obj_hdr_addr        = self.readField(self.resourceObject.offsetsize)
+            link_name_offset    = self.readField(self.resourceObject.offsetSize)
+            obj_hdr_addr        = self.readField(self.resourceObject.offsetSize)
             cache_type          = self.readField(4)
             self.pos += 20 # reserved + scratch pad
 
@@ -1471,11 +1470,12 @@ class H5Dataset:
             self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
 
             # process link
-            return_position = self.pos
             if dlvl < len(self.datasetPath) and link_name == self.datasetPath[dlvl]:
                 if cache_type == 2:
                     raise FatalError(f'symbolic links are unsupported: {link_name}')
-                self.readObjHdr(obj_hdr_addr, dlvl + 1)
+                return_position = self.pos
+                self.pos = obj_hdr_addr
+                self.readObjHdr(dlvl + 1)
                 self.pos = return_position
                 if self.earlyExit:
                     break # datasetFound
@@ -1874,8 +1874,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            log.info(f'Node Level:           {node_level}')
-            log.info(f'Entries Used:         {entries_used}')
+            log.debug(f'Node Level:           {node_level}')
+            log.debug(f'Entries Used:         {entries_used}')
 
         # skip sibling addresses
         self.pos += self.resourceObject.offsetSize * 2
@@ -1911,6 +1911,11 @@ class H5Dataset:
 
             # check inclusion
             if self.hypersliceIntersection(node_slice, node_level):
+
+                # display
+                if self.resourceObject.verbose:
+                    log.info(f'entry {node_level}.{e+1} of selected')
+
                 # process child entry
                 if node_level > 0:
                     return_position = self.pos
@@ -2015,6 +2020,10 @@ class H5Dataset:
                         x0 = abs(chunk_slice_to_read[d][0] - self.hyperslice[d][0])
                         x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
                         write_slice.append((x0, x1))
+
+                    # display
+                    if self.resourceObject.verbose:
+                        log.info(f'readSlice => shape={self.shape}, write_slice={write_slice}, read_slice={read_slice}, chunkDimensions={self.meta.chunkDimensions}')
 
                     # read subset of chunk into return buffer
                     self.readSlice(buffer, self.shape, write_slice, chunk_buffer, self.meta.chunkDimensions, read_slice)
