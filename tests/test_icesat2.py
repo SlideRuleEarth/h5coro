@@ -1,5 +1,3 @@
-"""Tests for h5 endpoint."""
-
 import pytest
 import h5coro
 from h5coro import s3driver, webdriver

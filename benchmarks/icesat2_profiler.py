@@ -31,13 +31,14 @@ import argparse
 import time
 import logging
 import os
+import sys
 import configparser
 import warnings
 import s3fs
 import h5py
 import h5coro
-from h5coro import s3driver, filedriver
-from sliderule import sliderule, h5
+from h5coro import s3driver, filedriver, logger
+from sliderule import sliderule, h5, icesat2
 
 ###############################################################################
 # GLOBALS
@@ -77,17 +78,8 @@ if args.organization == "None":
     args.desired_nodes = None
     args.time_to_live = None
 
-# Initialize Log Level
-loglevel = logging.CRITICAL
-if args.loglvl == "ERROR":
-    loglevel = logging.ERROR
-elif args.loglvl == "INFO":
-    loglevel = logging.INFO
-elif args.loglvl == "DEBUG":
-    loglevel = logging.DEBUG
-
 # Configure H5Coro
-h5coro.config(logLevel=loglevel)
+logger.config(logLevel=logging.INFO)
 
 # Initialize SlideRule Client
 sliderule.init(args.domain, verbose=args.verbose, organization=args.organization, desired_nodes=args.desired_nodes, time_to_live=args.time_to_live)
@@ -255,3 +247,227 @@ def inpoly (poly, point):
     #  if c == False: number of intersections were even --> point is outside polygon
     #  if c == True: number of intersections were odd --> point is inside polygon
     return c
+
+###############################################################################
+# ATL06 FUNCTIONS
+###############################################################################
+
+#
+# Function: atl06_subsetted_read
+#
+# read ATL06 resource and return variable's data within polygon
+#
+def atl06_subsetted_read(profiler, region, variable):
+
+    # Initialize return variables
+    data = []
+    latitudes = []
+    longitudes = []
+
+    # Create polygon
+    poly = [Point(coord["lon"], coord["lat"]) for coord in region]
+
+    # List of tracks to read
+    tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]
+
+    # Build list of each lat,lon dataset to read
+    geodatasets = []
+    for track in tracks:
+        prefix = "gt"+track+"/land_ice_segments/"
+        geodatasets.append({"dataset": prefix+"latitude", "startrow": 0, "numrows": -1})
+        geodatasets.append({"dataset": prefix+"longitude", "startrow": 0, "numrows": -1})
+
+    # Read lat,lon from resource
+    geocoords = profiler.read(geodatasets)
+
+    # Build list of the subsetted variable datasets to read
+    datasets = []
+    for track in tracks:
+        prefix = "gt"+track+"/land_ice_segments/"
+        lat_dataset = geocoords[prefix+"latitude"]
+        lon_dataset = geocoords[prefix+"longitude"]
+        startrow = -1
+        numrows = -1
+        index = 0
+        while index < len(lat_dataset):
+            point = Point(lon_dataset[index], lat_dataset[index])
+            intersect = inpoly(poly, point)
+            if startrow == -1 and intersect:
+                startrow = index
+            elif startrow != -1 and not intersect:
+                break
+            index += 10 # only sample values for speed increase
+        if startrow >= 0:
+            numrows = index - startrow
+        if numrows > 0:
+            datasets.append({"dataset": prefix+variable, "startrow": startrow, "numrows": numrows, "prefix": prefix})
+
+    # Read variable from resource
+    if len(datasets) > 0:
+        values = profiler.read(datasets)
+
+    # Append results
+    for entry in datasets:
+        latitudes += geocoords[entry["prefix"]+"latitude"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
+        longitudes += geocoords[entry["prefix"]+"longitude"][entry["startrow"]:entry["startrow"]+entry["numrows"]].tolist()
+        data += values[entry["prefix"]+variable].tolist()
+
+    # Return results
+    return {"latitude":  latitudes,
+            "longitude": longitudes,
+            variable:    data}
+
+#
+# Function: atl06_profile
+#
+def atl06_profile():
+    # Build Profilers
+    profiles = {
+        "s3fs":         Profiler(S3fsReader,        args.granule06),
+    #    "ros3":         Profiler(Ros3Reader,        args.granule06),
+        "sliderule-h5p":Profiler(SlideruleReader,   args.granule06),
+        "h5coro":       Profiler(H5CoroReader,      args.granule06),
+        "h5py-local":   Profiler(H5pyReader,        args.granule06),
+        "h5coro-local": Profiler(LocalH5CoroReader, args.granule06)
+    }
+
+    # Profile Readers
+    for profile in profiles:
+        profiler = profiles[profile]
+        print(f'Profiling {profile}... ', end='')
+        start = time.perf_counter()
+        result = atl06_subsetted_read(profiler, region, variable=args.variable06)
+        print(f'[{len(result[args.variable06])}]: {profiler.duration:.2f} {(time.perf_counter() - start):.2f}')
+
+###############################################################################
+# ATL03 FUNCTIONS
+###############################################################################
+
+#
+# Function: atl03_subsetted_read
+#
+# read ATL03 resource and return variable's data within polygon
+#
+def atl03_subsetted_read(profiler, region, variable, tracks = ["1l", "1r", "2l", "2r", "3l", "3r"]):
+
+    # Initialize return variables
+    data = []
+    latitudes = []
+    longitudes = []
+
+    # Create polygon
+    poly = [Point(coord["lon"], coord["lat"]) for coord in region]
+
+    # Build list of each lat,lon dataset to read
+    geodatasets = []
+    for track in tracks:
+        prefix = "gt"+track+"/geolocation/"
+        geodatasets.append({"dataset": prefix+"reference_photon_lat", "startrow": 0, "numrows": -1})
+        geodatasets.append({"dataset": prefix+"reference_photon_lon", "startrow": 0, "numrows": -1})
+        geodatasets.append({"dataset": prefix+"segment_ph_cnt", "startrow": 0, "numrows": -1})
+
+    # Read lat,lon from resource
+    geocoords = profiler.read(geodatasets)
+
+    # Build list of the subsetted variable datasets to read
+    datasets = []
+    for track in tracks:
+        geoprefix = "gt"+track+"/geolocation/"
+        prefix = "gt"+track+"/heights/"
+        lat_dataset = geocoords[geoprefix+"reference_photon_lat"]
+        lon_dataset = geocoords[geoprefix+"reference_photon_lon"]
+        cnt_dataset = geocoords[geoprefix+"segment_ph_cnt"]
+        startrow = -1
+        numrows = -1
+        index = 0
+        while index < len(lat_dataset):
+            point = Point(lon_dataset[index], lat_dataset[index])
+            intersect = inpoly(poly, point)
+            if startrow == -1 and intersect:
+                startrow = index
+            elif startrow != -1 and not intersect:
+                break
+            index += 10 # only sample values for speed increase
+        if startrow >= 0:
+            numrows = index - startrow
+        if numrows > 0:
+            start_ph = int(sum(cnt_dataset[:startrow]))
+            num_ph = int(sum(cnt_dataset[startrow:startrow+numrows]))
+            datasets.append({"dataset": prefix+variable, "startrow": start_ph, "numrows": num_ph, "col": 0, "startseg": startrow, "numsegs": numrows, "prefix": prefix, "geoprefix": geoprefix})
+
+    # Read variable from resource
+    if len(datasets) > 0:
+        values = profiler.read(datasets)
+
+    # Append results
+    for entry in datasets:
+        segments = geocoords[entry["geoprefix"]+"segment_ph_cnt"][entry["startseg"]:entry["startseg"]+entry["numsegs"]].tolist()
+        k = 0
+        for num_ph in segments:
+            for i in range(num_ph):
+                latitudes += [geocoords[entry["geoprefix"]+"reference_photon_lat"][k]]
+                longitudes += [geocoords[entry["geoprefix"]+"reference_photon_lon"][k]]
+            k += 1
+        data += values[entry["prefix"]+variable].tolist()
+
+    # Return results
+    return {"latitude":  latitudes,
+            "longitude": longitudes,
+            variable:    data}
+
+#
+# Function: atl03_sliderule_request
+#
+# request subsetting from sliderule for ATL03
+#
+def atl03_sliderule_request(region, parquet_file=None, open_on_complete=False, geo_fields=[], ph_fields=[]):
+    parms = {
+        "poly":         region,
+        "srt":          icesat2.SRT_LAND,
+        "len":          40,
+        "res":          40,
+        "pass_invalid": True,
+        "cnf":          -2,
+    }
+
+    if parquet_file != None:
+        parms["output"] = { "path": parquet_file, "format": "parquet", "open_on_complete": open_on_complete }
+
+    if len(geo_fields) > 0:
+        parms["atl03_geo_fields"] = geo_fields
+
+    if len(ph_fields) > 0:
+        parms["atl03_ph_fields"] = ph_fields
+
+    start = time.perf_counter()
+    gdf = icesat2.atl03sp(parms, asset="atlas-s3", resources=[args.granule03.split('/')[-1]])
+    duration = time.perf_counter() - start
+    return len(gdf), duration
+
+#
+# Function: atl03_profile
+#
+def atl03_profile():
+    # Build Profilers
+    profiles = {
+        "s3fs":         Profiler(S3fsReader,        args.granule03),
+    #    "ros3":         Profiler(Ros3Reader,        args.granule03),
+        "sliderule-h5p":Profiler(SlideruleReader,   args.granule03),
+        "h5coro":       Profiler(H5CoroReader,      args.granule03),
+        "h5py-local":   Profiler(H5pyReader,        args.granule03),
+        "h5coro-local": Profiler(LocalH5CoroReader, args.granule03)
+    }
+
+    # Profile Readers
+    for profile in profiles:
+        profiler = profiles[profile]
+        print(f'Profiling {profile}... ', end='')
+        sys.stdout.flush()
+        start = time.perf_counter()
+        result = atl03_subsetted_read(profiler, region, variable=args.variable03)
+        print(f'[{len(result[args.variable03])}]: {profiler.duration:.2f} {(time.perf_counter() - start):.2f}')
+
+###############################################################################
+# MAIN
+###############################################################################
+

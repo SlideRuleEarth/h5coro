@@ -1,37 +1,40 @@
+# imports
+import time
+import pathlib
+import s3fs
+import h5py
+import boto3
 import h5coro
 from h5coro import s3driver, logger
-import earthaccess
+
+# configure h5coro
 import logging
+logger.config(logLevel=logging.INFO)
 
-def icesat2_test():
-    granule = 'nsidc-cumulus-prod-protected/ATLAS/ATL03/005/2018/10/17/ATL03_20181017222812_02950102_005_01.h5'
-    variable = '/gt2l/heights/signal_conf_ph'
-    datasets = [ {"dataset": variable,
-                "hyperslice": [(0,10)] } ]
+# test parameters
+granule = 'OR_ABI-L1b-RadF-M6C14_G16_s20192950450355_e20192950500042_c20192950500130.nc'
+bucketname = 'eso-west2-curated'
+objectname = 'AOS/PoR/geo/GOES-16-ABI-L1B-FULLD/2019/295/04/' + granule
+objecturl = 's3://' + bucketname + '/' + objectname
+variable = '/Rad'
+datasets = [ {"dataset": variable, "hyperslice": [[17,18], [2500,2600]]} ]
+credentials = {"profile":"default"}
 
-    logger.config(logLevel=logging.CRITICAL)
+# read dataset
+#s3 = s3fs.S3FileSystem()
+#fp = h5py.File(s3.open(objecturl, 'rb'), mode='r')
+    
+# read dataset
+h5obj = h5coro.H5Coro(bucketname + '/' + objectname, s3driver.S3Driver, errorChecking=True, verbose=True, credentials=credentials, multiProcess=False)
+promise = h5obj.readDatasets(datasets, block=True, enableAttributes=False)
 
-    auth = earthaccess.login()
-    s3_creds = auth.get_s3_credentials(daac='NSIDC')
+# compare datasets
+#for row in range(len(fp[variable])):
+#    print(f'Checking row: {row}')
+#    for column in range(len(fp[variable][row])):
+#        if fp[variable][row][column] != promise[variable][row][column]:
+#            print(f'====> Mismatch at {row},{column}: {fp[variable][row][column]} != {promise[variable][row][column]}')
 
-    h5obj = h5coro.H5Coro(granule, s3driver.S3Driver, errorChecking=True, verbose=False, credentials=s3_creds, multiProcess=False)
-    promise = h5obj.readDatasets(datasets, block=True, enableAttributes=False)
-    for variable in promise:
-        print(f'{variable}: {promise[variable][:]}')
-
-def eso_test():
-    granule = 'eso-west2-curated/AOS/PoR/geo/GOES-16-ABI-L1B-FULLD/2019/295/04/OR_ABI-L1b-RadF-M6C14_G16_s20192950450355_e20192950500042_c20192950500130.nc'
-    variable = '/Rad'
-    datasets = [ {"dataset": variable,
-                "hyperslice": [(0,10), (0,10)] } ]
-
-    logger.config(logLevel=logging.INFO)
-
-    credentials = {"profile":"default"}
-
-    h5obj = h5coro.H5Coro(granule, s3driver.S3Driver, errorChecking=True, verbose=True, credentials=credentials, multiProcess=False)
-    promise = h5obj.readDatasets(datasets, block=True, enableAttributes=False)
-    for variable in promise:
-        print(f'{variable}: {promise[variable][:]}')
-
-icesat2_test()
+for row in promise[variable]:
+    for i in range(0, len(row), 10):
+        print(i, row[i:i+10])
