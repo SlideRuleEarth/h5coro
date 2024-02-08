@@ -245,7 +245,7 @@ class H5Dataset:
             self.dimensionsInChunks = [int(self.meta.dimensions[d] / self.meta.chunkDimensions[d]) for d in range(self.meta.ndims)]
             self.chunkStepSize = [1 for _ in range(self.meta.ndims)]
             for d in range(self.meta.ndims-1, 0, -1):
-                self.chunkStepSize[d-1] *= self.dimensionsInChunks[d] * self.chunkStepSize[d]
+                self.chunkStepSize[d-1] = self.dimensionsInChunks[d] * self.chunkStepSize[d]
 
             # calculate position of first and last element in hyperslice
             hyperslice_in_chunks = [(int(self.hyperslice[d][0] / self.meta.chunkDimensions[d]), int(self.hyperslice[d][1] / self.meta.chunkDimensions[d])) for d in range(self.meta.ndims)]
@@ -1804,8 +1804,8 @@ class H5Dataset:
         input_dim_step = [self.meta.typeSize for _ in range(ndims)]
         output_dim_step = [self.meta.typeSize for _ in range(ndims)]
         for d in range(ndims-1, 0, -1):
-            input_dim_step[d-1] *= input_dimensions[d] * input_dim_step[d]
-            output_dim_step[d-1] *= output_dimensions[d] * output_dim_step[d]
+            input_dim_step[d-1] = input_dimensions[d] * input_dim_step[d]
+            output_dim_step[d-1] = output_dimensions[d] * output_dim_step[d]
 
         # initialize dimension indices
         input_dim_index = [i[0] for i in input_slice] # initialize to the start index of each input_slice
@@ -1820,16 +1820,16 @@ class H5Dataset:
 
             # calculate source offset
             src_offset = 0
-            for d in range(ndims - 1):
+            for d in range(ndims):
                 src_offset += (input_dim_index[d] * input_dim_step[d])
 
             # calculate destination offset
             dst_offset = 0
-            for d in range(ndims - 1):
+            for d in range(ndims):
                 dst_offset += (output_dim_index[d] * output_dim_step[d])
 
             # copy data from input buffer to output buffer
-            output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset+read_size]
+            output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset + read_size]
 
             # go to next set of input indices
             input_dim_index[-1] += read_slice
@@ -2020,10 +2020,6 @@ class H5Dataset:
                         x0 = abs(chunk_slice_to_read[d][0] - self.hyperslice[d][0])
                         x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
                         write_slice.append((x0, x1))
-
-                    # display
-                    if self.resourceObject.verbose:
-                        log.info(f'readSlice => shape={self.shape}, write_slice={write_slice}, read_slice={read_slice}, chunkDimensions={self.meta.chunkDimensions}')
 
                     # read subset of chunk into return buffer
                     self.readSlice(buffer, self.shape, write_slice, chunk_buffer, self.meta.chunkDimensions, read_slice)
