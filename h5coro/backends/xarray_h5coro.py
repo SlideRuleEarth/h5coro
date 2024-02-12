@@ -31,6 +31,9 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
 
         Parameters
         ----------
+        group:          str; REQUIRED
+                        A path indicating which group within the hdf file to read. Root group should be
+                        specified by '/'.
         credentials:    dict
                         (1) a dict with keys aws_access_key_id, aws_secret_access_key, and aws_session_token;
                         (2) a dict with keys accessKeyID, secretAccessKey, and sessionToken;
