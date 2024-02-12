@@ -30,6 +30,7 @@
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 from datetime import datetime
+from multiprocessing import shared_memory, Process
 import struct
 import zlib
 import ctypes
@@ -61,7 +62,14 @@ class FatalError(RuntimeError):
     pass
 
 ###############################################################################
-# H5Dataset Class
+# LOCAL FUNCTIONS
+###############################################################################
+
+def BTreeReader(dataset, buffer, level):
+    dataset.readBTreeV1(buffer, level)
+
+###############################################################################
+# H5DATASET CLASS
 ###############################################################################
 
 class H5Dataset:
@@ -71,9 +79,6 @@ class H5Dataset:
     #######################
     # local
     CUSTOM_V1_FLAG          = 0x80
-    ALL_ROWS                = -1
-    MAX_NDIMS               = 2
-    FLAT_NDIMS              = 3
     # signatures
     H5_SIGNATURE_LE         = 0x0A1A0A0D46444889
     H5_OHDR_SIGNATURE_LE    = 0x5244484F
@@ -104,22 +109,25 @@ class H5Dataset:
     #######################
     # Constructor
     #######################
-    def __init__(self, resourceObject, dataset, startRow=0, numRows=ALL_ROWS, makeNull=False, *, earlyExit, metaOnly, enableAttributes):
+    def __init__(self, resourceObject, dataset, hyperslice=None, makeNull=False, enableFill=True, *, earlyExit, metaOnly, enableAttributes):
         # initialize object
         self.resourceObject         = resourceObject
         self.earlyExit              = earlyExit
         self.metaOnly               = metaOnly
         self.enableAttributes       = enableAttributes
+        self.enableFill             = enableFill
         self.pos                    = self.resourceObject.rootAddress
         self.currObjHdrPos          = 0
+        self.numElements            = 1 # recalculated below
+        self.shape                  = [] # recalculated below
         self.dataset                = dataset
-        self.datasetStartRow        = startRow
-        self.datasetNumRows         = numRows
+        self.hyperslice             = hyperslice
         self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
         self.datasetPathLevels      = len(self.datasetPath)
         self.datasetFound           = False
         self.dataChunkBufferSize    = 0
         self.meta                   = H5Metadata()
+        self.sharedBuffer           = None
         self.values                 = None
 
         # check for null dataset
@@ -152,141 +160,130 @@ class H5Dataset:
             raise FatalError(f'missing data dimension information for {self.dataset}')
         elif self.meta.address == INVALID_VALUE[self.resourceObject.offsetSize]:
             raise FatalError(f'invalid data address for {self.dataset}')
+        elif len(self.hyperslice) > self.meta.ndims:
+            raise FatalError(f'cannot provide hyperslice with more dimensions that dataset: {len(self.hyperslice)} > {self.meta.ndims}')
+        elif (self.meta.filter[self.meta.DEFLATE_FILTER] or self.meta.filter[self.meta.SHUFFLE_FILTER]) and \
+             ((self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT)):
+            raise FatalError(f'filters unsupported on non-chunked layouts')
 
-        # calculate size of data row (note dimension starts at 1)
-        row_size = self.meta.typeSize
-        for d in range(1, self.meta.ndims):
-            row_size *= self.meta.dimensions[d]
+        # massage hyperslice
+        for d in range(self.meta.ndims):
+            if d < len(self.hyperslice):
+                if self.hyperslice[d] == None:
+                    self.hyperslice[d] = (0, self.meta.dimensions[d])
+                elif len(self.hyperslice[d]) == 2:
+                    if self.hyperslice[d][0] == None:
+                        self.hyperslice[d][0] = 0
+                    if self.hyperslice[d][1] == None:
+                        self.hyperslice[d][1] = self.meta.dimensions[d]
+                else:
+                    raise FatalError(f'invalid hyperslice, must provide as list of ranges [x,y), got {self.hyperslice}')
+            else:
+                self.hyperslice.append((0, self.meta.dimensions[d]))
+            
+            # check for valid hyperslice
+            if (self.hyperslice[d][1] < self.hyperslice[d][0]) or \
+               (self.hyperslice[d][1] > self.meta.dimensions[d]) or \
+               (self.hyperslice[d][0] < 0) or (self.hyperslice[d][1] < 0):
+                    raise FatalError(f'invalid hyperslice, must provide as list of valid ranges, got {self.hyperslice}')
 
-        # get number of rows
-        first_dimension = (self.meta.ndims > 0) and self.meta.dimensions[0] or 1
-        self.datasetNumRows = (self.datasetNumRows == self.ALL_ROWS) and first_dimension or self.datasetNumRows
-        if (self.datasetStartRow + self.datasetNumRows) > first_dimension:
-            raise FatalError(f'read exceeds number of rows: {self.datasetStartRow} + {self.datasetNumRows} > {first_dimension}')
+        # calculate shape and number of elements
+        for d in range(self.meta.ndims):
+            elements_in_dimension = self.hyperslice[d][1] - self.hyperslice[d][0]
+            if elements_in_dimension > 0:
+                self.numElements *= elements_in_dimension
+            self.shape.append(elements_in_dimension)
 
         # calculate size of buffer
-        buffer_size = row_size * self.datasetNumRows
+        buffer_size = self.meta.typeSize * self.numElements
+        if buffer_size <= 0:
+            log.warn(f'empty read: typeSize={self.meta.typeSize}, numElements={self.numElements}')
+            return
 
-        # calculate buffer start */
-        buffer_offset = row_size * self.datasetStartRow
+        # allocate buffer
+        if self.resourceObject.multiProcess:
+            if self.meta.ndims > 0:
+                self.sharedBuffer = shared_memory.SharedMemory(create=True, size=buffer_size)
+                buffer = self.sharedBuffer.buf
+        else:
+            buffer = bytearray(buffer_size)
 
-        # check if data address and data size is valid
-        if self.resourceObject.errorChecking:
-            if (self.meta.size != 0) and (self.meta.size < (buffer_offset + buffer_size)):
-                raise FatalError(f'read exceeds available data: {self.meta.size} < {buffer_offset} + {buffer_size}')
-            if (self.meta.filter[self.meta.DEFLATE_FILTER] or self.meta.filter[self.meta.SHUFFLE_FILTER]) and \
-               ((self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT)):
-                raise FatalError(f'filters unsupported on non-chunked layouts')
+        # ###################################
+        # read compact and contiguous layouts
+        # ###################################
+        if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
+            if self.meta.ndims == 0:
+                buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
+            else:
+                compact_buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
+                self.readSlice(buffer, self.shape, self.hyperslice, compact_buffer, self.meta.dimensions, self.hyperslice)
 
-        # read dataset
-        if buffer_size > 0:
-            if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
-                data_addr = self.meta.address + buffer_offset
-                buffer = self.resourceObject.ioRequest(data_addr, buffer_size, caching=False)
-            elif self.meta.layout == self.CHUNKED_LAYOUT:
-                # chunk layout specific error checks
-                if self.resourceObject.errorChecking:
-                    if self.meta.elementSize != self.meta.typeSize:
-                        raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
-                    elif self.meta.chunkElements <= 0:
-                        raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
+        # ###################################
+        # read chunked layouts
+        # ###################################
+        elif self.meta.layout == self.CHUNKED_LAYOUT:
+            # chunk layout specific error checks
+            if self.resourceObject.errorChecking:
+                if self.meta.elementSize != self.meta.typeSize:
+                    raise FatalError(f'chunk element size does not match data element size: {self.meta.elementSize} !=  {self.meta.typeSize}')
+                elif self.meta.chunkElements <= 0:
+                    raise FatalError(f'invalid number of chunk elements: {self.meta.chunkElements}')
 
-                # allocate and initialize buffer
-                buffer = bytearray(buffer_size)
+            # fill buffer with fill value (if provided and if enabled)
+            if self.enableFill and self.meta.fillsize > 0:
+                fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
+                for i in range(0, buffer_size, self.meta.fillsize):
+                    buffer[i:i+self.meta.fillsize] = fill_values
 
-                # fill buffer with fill value (if provided)
-#                if self.meta.fillsize > 0:
-#                    fill_values = struct.pack('Q', self.meta.fillvalue)[:self.meta.fillsize]
-#                    for i in range(0, buffer_size, self.meta.fillsize):
-#                        buffer[i:i+self.meta.fillsize] = fill_values
+            # calculate data chunk buffer size
+            self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
 
-                # calculate data chunk buffer size
-                self.dataChunkBufferSize = self.meta.chunkElements * self.meta.typeSize
+            # calculate step size of each dimension in chunks
+            # ... for example a 12x12x12 cube of unsigned chars
+            # ... with a chunk size of 3x3x3 would be have 4x4x4 chunks
+            # ... the step size in chunks is then 16x4x1
+            self.dimensionsInChunks = [int(self.meta.dimensions[d] / self.meta.chunkDimensions[d]) for d in range(self.meta.ndims)]
+            self.chunkStepSize = [1 for _ in range(self.meta.ndims)]
+            for d in range(self.meta.ndims-1, 0, -1):
+                self.chunkStepSize[d-1] = self.dimensionsInChunks[d] * self.chunkStepSize[d]
 
-                # read b-tree
-                self.pos = self.meta.address
-                self.readBTreeV1(buffer, buffer_offset, dataset_level)
+            # calculate position of first and last element in hyperslice
+            hyperslice_in_chunks = [(int(self.hyperslice[d][0] / self.meta.chunkDimensions[d]), int(self.hyperslice[d][1] / self.meta.chunkDimensions[d])) for d in range(self.meta.ndims)]
+            self.hypersliceChunkStart = sum([hyperslice_in_chunks[d][0] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            self.hypersliceChunkEnd = sum([hyperslice_in_chunks[d][1] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
 
-                # check need to flatten chunks
-                flatten = False
-                for d in range(1, self.meta.ndims):
-                    if self.meta.chunkDimensions[d] != self.meta.dimensions[d]:
-                        flatten = True
-                        break
+            # read b-tree
+            self.pos = self.meta.address
+            if self.resourceObject.multiProcess:
+                reader = Process(target=BTreeReader, args=(self, buffer, dataset_level))
+                reader.start()
+                reader.join()
+            else:
+                self.readBTreeV1(buffer, dataset_level)
 
-                # flatten chunks - place dataset in row order
-                if flatten:
-                    # new flattened buffer
-                    fbuf = numpy.empty(buffer_size, dtype=numpy.byte)
-                    bi = 0 # index into source buffer
-
-                    # build number of each chunk per dimension
-                    cdimnum = [0 for _ in range(self.MAX_NDIMS * 2)]
-                    for i in range(self.meta.ndims):
-                        cdimnum[i] = self.meta.dimensions[i] / self.meta.chunkDimensions[i]
-                        cdimnum[i + self.meta.ndims] = self.meta.chunkDimensions[i]
-
-                    # build size of each chunk per flattened dimension
-                    cdimsizes = [0 for _ in range(self.FLAT_NDIMS)]
-                    cdimsizes[0] = self.meta.chunkDimensions[0] * self.meta.typeSize  # number of chunk rows
-                    for i in range(1, self.meta.ndims):
-                        cdimsizes[0] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[0] *= self.meta.chunkDimensions[i]        # number of columns in chunks
-                    cdimsizes[1] = self.meta.typeSize
-                    for i in range(1, self.meta.ndims):
-                        cdimsizes[1] *= self.meta.chunkDimensions[i]        # number of columns in chunks
-                    cdimsizes[2] = self.meta.typeSize
-                    for i in range(1, self.meta.ndims):
-                        cdimsizes[2] *= cdimnum[i]                          # number of columns of chunks
-                        cdimsizes[2] *= self.meta.chunkDimensions[i]        # number of columns in chunks
-
-                    # initialize loop variables
-                    ci = self.FLAT_NDIMS - 1;                               # chunk dimension index
-                    dimi = [0 for _ in range(self.MAX_NDIMS * 2)]           # chunk dimension indices
-
-                    # loop through each chunk
-                    while True:
-                        # calculate start position
-                        start = 0
-                        for i in range(self.FLAT_NDIMS):
-                            start += dimi[i] * cdimsizes[i]
-
-                        # copy into new buffer
-                        for k in range(cdimsizes[1]):
-                            fbuf[int(start + k)] = buffer[bi]
-                            bi += 1
-
-                        # update indices
-                        dimi[ci] += 1
-                        while dimi[ci] == cdimnum[ci]:
-                            dimi[ci] = 0
-                            ci -= 1
-                            if ci < 0:
-                                break
-                            else:
-                                dimi[ci] += 1
-
-                        # check exit condition
-                        if ci < 0:
-                            break
-                        else:
-                            ci = self.FLAT_NDIMS - 1
-
-                    # replace buffer
-                    buffer = fbuf
-
-            elif self.resourceObject.errorChecking:
-                raise FatalError(f'invalid data layout: {self.meta.layout}')
+        elif self.resourceObject.errorChecking:
+            raise FatalError(f'invalid data layout: {self.meta.layout}')
 
         # populate data
         if self.meta.type == H5Metadata.FIXED_POINT_TYPE or self.meta.type == H5Metadata.FLOATING_POINT_TYPE:
             elements = int(buffer_size / self.meta.typeSize)
             datatype = H5Metadata.TO_NUMPY_TYPE[self.meta.type][self.meta.signedval][self.meta.typeSize]
             self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
+            if self.meta.ndims > 1:
+                self.values = self.values.reshape(self.shape)
         elif self.meta.type == H5Metadata.STRING_TYPE:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         else:
             log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
+            
+    #######################
+    # Destructor
+    #######################
+    def __del__(self):
+        self.values = None
+        if self.sharedBuffer != None:
+            self.sharedBuffer.close()
+            self.sharedBuffer.unlink()
 
     #######################
     # readField
@@ -365,7 +362,7 @@ class H5Dataset:
             block = resourceObject.ioRequest(12 + (3 * resourceObject.offsetSize), resourceObject.offsetSize)
             root_group_offset = struct.unpack(f'<{SIZE_2_FORMAT[resourceObject.offsetSize]}', block)[0]
 
-        # print file information
+        # display file information
         if resourceObject.verbose:
             log.info(f'File Information @0x{root_group_offset:x}')
             log.info(f'Size of Offsets:      {resourceObject.offsetSize}')
@@ -547,7 +544,7 @@ class H5Dataset:
             self.pos += alignment_padding
             bytes_read += alignment_padding
             if self.resourceObject.errorChecking and (bytes_read != msg_size):
-                raise FatalError(f'header v1 message different size than specified: {bytes_read} != {msg_size}')
+                raise FatalError(f'header v1 message of type {msg_type} different size than specified: {bytes_read} != {msg_size}')
 
             # check if dataset found
             if self.earlyExit and self.datasetFound:
@@ -613,14 +610,14 @@ class H5Dataset:
         PERM_INDEX_PRESENT = 0x2
         starting_position  = self.pos
         version            = self.readField(1)
-        dimensionality     = self.readField(1)
+        meta.ndims         = self.readField(1)
         flags              = self.readField(1)
         self.pos          += ((version == 1) and 5 or 1) # go past reserved bytes
 
         if self.resourceObject.verbose:
             log.info(f'<<Dataspace Message - {self.dataset}[{dlvl}] @0x{starting_position:x}>>')
             log.info(f'Version:              {version}')
-            log.info(f'Dimensionality:       {dimensionality}')
+            log.info(f'Dimensionality:       {meta.ndims}')
             log.info(f'Flags:                {flags}')
 
         # check version and flags and dimenstionality
@@ -629,12 +626,9 @@ class H5Dataset:
                 raise FatalError(f'unsupported dataspace version: {version}')
             if flags & PERM_INDEX_PRESENT:
                 raise FatalError(f'unsupported permutation indexes')
-            if dimensionality > self.MAX_NDIMS:
-                raise FatalError(f'unsupported number of dimensions: {dimensionality}')
 
         # read and populate data dimensions
         meta.dimensions = []
-        meta.ndims = min(dimensionality, self.MAX_NDIMS)
         if meta.ndims > 0:
             for x in range(meta.ndims):
                 dimension = self.readField(self.resourceObject.lengthSize)
@@ -644,7 +638,7 @@ class H5Dataset:
 
             # skip over dimension permutations
             if flags & MAX_DIM_PRESENT:
-                skip_bytes = dimensionality * self.resourceObject.lengthSize
+                skip_bytes = meta.ndims * self.resourceObject.lengthSize
                 self.pos += skip_bytes
 
         # return bytes read
@@ -1037,7 +1031,6 @@ class H5Dataset:
         elif self.meta.layout == self.CHUNKED_LAYOUT:
             # read number of dimensions
             chunk_num_dim = self.readField(1) - 1  # dimensionality is plus one over actual number of dimensions
-            chunk_num_dim = min(chunk_num_dim, self.MAX_NDIMS)
             if self.resourceObject.errorChecking and (self.meta.ndims != None) and (chunk_num_dim != self.meta.ndims):
                 raise FatalError(f'number of chunk dimensions does not match dimensionality of data: {chunk_num_dim} != {self.meta.ndims}')
             # read address of B-tree
@@ -1145,7 +1138,7 @@ class H5Dataset:
         PAD_SIZE            = 8
         starting_position   = self.pos
         version             = self.readField(1)
-        self.pos           += 1
+        v2_3_flags          = self.readField(1)
         name_size           = self.readField(2)
         datatype_size       = self.readField(2)
         dataspace_size      = self.readField(2)
@@ -1156,17 +1149,36 @@ class H5Dataset:
             log.info(f'Version:              {version}')
 
         # check version
-        if self.resourceObject.errorChecking and (version != 1):
+        if self.resourceObject.errorChecking and (version != 1) and (version != 2) and (version != 3):
             raise FatalError(f'invalid attribute version: {version}')
 
-        # update message sizes
-        datatype_size += ((PAD_SIZE - (datatype_size % PAD_SIZE)) % PAD_SIZE)
-        dataspace_size += ((PAD_SIZE - (dataspace_size % PAD_SIZE)) % PAD_SIZE)
+        # check shared messages
+        if self.resourceObject.errorChecking and (version != 1) and (v2_3_flags != 0):
+            raise FatalError(f'unsupported shared messages for attribute: {v2_3_flags}')
+
+        # character encoding
+        char_encoding = 'utf-8'
+        if version == 3:
+            name_character_set_encoding = self.readField(1)
+            if name_character_set_encoding == 0:
+                char_encoding = 'ascii'
+            elif name_character_set_encoding == 1:
+                char_encoding = 'utf-8'
+            elif self.resourceObject.errorChecking:
+                raise FatalError(f'invalid character set encoding: {name_character_set_encoding}')
+
+        # pad out message sizes (version 1 only)
+        if version == 1:
+            datatype_size += ((PAD_SIZE - (datatype_size % PAD_SIZE)) % PAD_SIZE)
+            dataspace_size += ((PAD_SIZE - (dataspace_size % PAD_SIZE)) % PAD_SIZE)
 
         # read attribute name
-        attr_name = self.readArray(name_size).tobytes().decode('utf-8')[:-1]
-        self.pos += (PAD_SIZE - (name_size % PAD_SIZE)) % PAD_SIZE; # align to next x-byte boundary
+        attr_name = self.readArray(name_size).tobytes().decode(char_encoding).strip('\0')
         attr_path = '/'.join(self.datasetPath[:dlvl] + [attr_name])
+
+        # pad out name size (version 1 only)
+        if version == 1:
+            self.pos += (PAD_SIZE - (name_size % PAD_SIZE)) % PAD_SIZE; # align to next x-byte boundary
 
         # display
         if self.resourceObject.verbose:
@@ -1351,10 +1363,9 @@ class H5Dataset:
             else:
                 self.pos += 6
 
-        # return bytes read
-        bytes_read = self.resourceObject.offsetSize + self.resourceObject.lengthSize
-        self.pos = return_position + bytes_read
-        return bytes_read
+        # reset position and return bytes read
+        self.pos = return_position 
+        return return_position - starting_position
 
     #######################
     # attributeinfoMsgHandler
@@ -1431,8 +1442,8 @@ class H5Dataset:
         num_symbols = self.readField(2)
         for _ in range(num_symbols):
             # read symbol entry
-            link_name_offset    = self.readField(self.resourceObject.offsetsize)
-            obj_hdr_addr        = self.readField(self.resourceObject.offsetsize)
+            link_name_offset    = self.readField(self.resourceObject.offsetSize)
+            obj_hdr_addr        = self.readField(self.resourceObject.offsetSize)
             cache_type          = self.readField(4)
             self.pos += 20 # reserved + scratch pad
 
@@ -1459,11 +1470,12 @@ class H5Dataset:
             self.resourceObject.pathAddresses[group_path] = obj_hdr_addr
 
             # process link
-            return_position = self.pos
             if dlvl < len(self.datasetPath) and link_name == self.datasetPath[dlvl]:
                 if cache_type == 2:
                     raise FatalError(f'symbolic links are unsupported: {link_name}')
-                self.readObjHdr(obj_hdr_addr, dlvl + 1)
+                return_position = self.pos
+                self.pos = obj_hdr_addr
+                self.readObjHdr(dlvl + 1)
                 self.pos = return_position
                 if self.earlyExit:
                     break # datasetFound
@@ -1750,12 +1762,96 @@ class H5Dataset:
         return self.pos - starting_position
 
     #######################
+    # hypersliceIntersection
+    #######################
+    def hypersliceIntersection(self, node_slice, node_level):
+        if node_level == 0:
+            # check for intersection for all dimensions
+            for d in range(self.meta.ndims):
+                if node_slice[d][1] < self.hyperslice[d][0] or node_slice[d][0] >= self.hyperslice[d][1]:
+                    return False
+            return True
+        else: # node_level > 0
+            # calculate chunk of node slice
+            node_slice_in_chunks = [(int(node_slice[d][0] / self.meta.chunkDimensions[d]), int(node_slice[d][1] / self.meta.chunkDimensions[d])) for d in range(self.meta.ndims)]
+            # calculate element position
+            node_start = sum([node_slice_in_chunks[d][0] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            node_end = sum([node_slice_in_chunks[d][1] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
+            # check for intersection of position
+            if node_end < self.hypersliceChunkStart or node_start >= self.hypersliceChunkEnd:
+                return False
+            return True
+
+    #######################
+    # hypersliceSubset
+    #######################
+    def hypersliceSubset(self, chunk_slice):
+        subset = []
+        for d in range(self.meta.ndims):
+            subset.append((max(chunk_slice[d][0], self.hyperslice[d][0]), min(chunk_slice[d][1], self.hyperslice[d][1])))
+        return subset
+
+    #######################
+    # readSlice
+    #######################
+    def readSlice(self, output_buffer, output_dimensions, output_slice, input_buffer, input_dimensions, input_slice):
+
+        # get number of dimensions
+        ndims = len(input_dimensions)
+
+        # build serialized size of each input and output dimension
+        # ... for example a 4x4x4 cube of unsigned chars would be 16,4,1
+        input_dim_step = [self.meta.typeSize for _ in range(ndims)]
+        output_dim_step = [self.meta.typeSize for _ in range(ndims)]
+        for d in range(ndims-1, 0, -1):
+            input_dim_step[d-1] = input_dimensions[d] * input_dim_step[d]
+            output_dim_step[d-1] = output_dimensions[d] * output_dim_step[d]
+
+        # initialize dimension indices
+        input_dim_index = [i[0] for i in input_slice] # initialize to the start index of each input_slice
+        output_dim_index = [i[0] for i in output_slice] # initialize to the start index of each output_slice
+
+        # calculate amount to read each time
+        read_slice = input_slice[-1][1] - input_slice[-1][0]
+        read_size = input_dim_step[-1] * read_slice # size of data to read each time
+
+        # read each input_slice
+        while input_dim_index[0] < input_slice[0][1]: # while the first dimension index has not traversed its range
+
+            # calculate source offset
+            src_offset = 0
+            for d in range(ndims):
+                src_offset += (input_dim_index[d] * input_dim_step[d])
+
+            # calculate destination offset
+            dst_offset = 0
+            for d in range(ndims):
+                dst_offset += (output_dim_index[d] * output_dim_step[d])
+
+            # copy data from input buffer to output buffer
+            output_buffer[dst_offset:dst_offset + read_size] = input_buffer[src_offset:src_offset + read_size]
+
+            # go to next set of input indices
+            input_dim_index[-1] += read_slice
+            i = len(input_dim_index) - 1
+            while i > 0 and input_dim_index[i] == input_slice[i][1]:    # while the level being examined is at the last index
+                input_dim_index[i] = input_slice[i][0]                  # set index back to the beginning of hyperslice
+                input_dim_index[i - 1] += 1                             # bump the previous index to the next element in dimension
+                i -= 1                                                  # go to previous dimension
+
+            # update output indices
+            output_dim_index[-1] += read_slice
+            i = len(output_dim_index) - 1
+            while i > 0 and output_dim_index[i] == output_slice[i][1]:  # while the level being examined is at the last index
+                output_dim_index[i] = output_slice[i][0]                # set index back to the beginning of hyperslice
+                output_dim_index[i - 1] += 1                            # bump the previous index to the next element in dimension
+                i -= 1                                                  # go to previous dimension
+
+    #######################
     # readBTreeV1
     #######################
-    def readBTreeV1(self, buffer, buffer_offset, dlvl):
+    def readBTreeV1(self, buffer, dlvl):
         starting_position = self.pos
-        data_key1 = self.datasetStartRow
-        data_key2 = self.datasetStartRow + self.datasetNumRows - 1
 
         # display
         if self.resourceObject.verbose:
@@ -1778,8 +1874,8 @@ class H5Dataset:
 
         # display
         if self.resourceObject.verbose:
-            log.info(f'Node Level:           {node_level}')
-            log.info(f'Entries Used:         {entries_used}')
+            log.debug(f'Node Level:           {node_level}')
+            log.debug(f'Entries Used:         {entries_used}')
 
         # skip sibling addresses
         self.pos += self.resourceObject.offsetSize * 2
@@ -1791,42 +1887,50 @@ class H5Dataset:
         for e in range(entries_used):
             child_addr  = self.readField(self.resourceObject.offsetSize)
             next_node   = self.readBTreeNodeV1(self.meta.ndims)
-            child_key1  = curr_node['row_key']
-            child_key2  = next_node['row_key'] # there is always +1 keys
-            if (next_node['chunk_size'] == 0) and (self.meta.ndims > 0):
-                child_key2 = self.meta.dimensions[0]
+
+            # construct node slice
+            if node_level > 0:
+                node_slice = [(start, stop) for start, stop in zip(curr_node['slice'], next_node['slice'])]
+            else:
+                node_slice = [(start, min(start + extent, dimension)) for start, extent, dimension in zip(curr_node['slice'], self.meta.chunkDimensions, self.meta.dimensions)]
 
             # display
             if self.resourceObject.verbose:
+                log.info(f'level={node_level}, entry={e+1} of {entries_used}, node_slice={node_slice}, curr_node={curr_node["slice"]}, next_node={next_node["slice"]}')
                 log.debug(f'Entry <{node_level}>:            {e}')
                 log.debug(f'Chunk Size:           {curr_node["chunk_size"]} | {next_node["chunk_size"]}')
                 log.debug(f'Filter Mask:          {curr_node["filter_mask"]} | {next_node["filter_mask"]}')
-                log.debug(f'Chunk Key:            {child_key1} | {child_key2}')
-                log.debug(f'Data Key:             {data_key1} | {data_key2}')
-                log.debug(f'Slice:                {" ".join([str(d) for d in curr_node["slice"]])}')
+                log.debug(f'Node Slice:           {curr_node["slice"]} | {next_node["slice"]}')
+                log.debug(f'Hyperslice:           {self.hyperslice}')
+                log.debug(f'Chunk Dimensions:     {self.meta.chunkDimensions}')
                 log.debug(f'Child Address:        0x{child_addr:x}')
 
+            # check for short-cutting
+            if self.meta.ndims <= 1 and self.hyperslice[0][1] < node_slice[0][0]:
+                break
+
             # check inclusion
-            if  (data_key1  >= child_key1 and data_key1  <  child_key2) or \
-                (data_key2  >= child_key1 and data_key2  <  child_key2) or \
-                (child_key1 >= data_key1  and child_key1 <= data_key2)  or \
-                (child_key2 >  data_key1  and child_key2 <  data_key2):
+            if self.hypersliceIntersection(node_slice, node_level):
+
+                # display
+                if self.resourceObject.verbose:
+                    log.info(f'entry {node_level}.{e+1} of selected')
+
                 # process child entry
                 if node_level > 0:
                     return_position = self.pos
                     self.pos = child_addr
-                    self.readBTreeV1(buffer, buffer_offset, dlvl)
+                    self.readBTreeV1(buffer, dlvl)
                     self.pos = return_position
-                else:
-                    # calculate chunk location
-                    chunk_offset = 0
-                    for i in range(self.meta.ndims):
-                        slice_size = curr_node['slice'][i] * self.meta.typeSize
-                        for k in range(i):
-                            slice_size *= self.meta.chunkDimensions[k]
-                        for j in range(i + 1, self.meta.ndims):
-                            slice_size *= self.meta.dimensions[j]
-                        chunk_offset += slice_size
+                
+                elif self.meta.ndims == 0:
+                    log.warn(f'Unexpected chunked read of a zero dimensional dataset')
+                    pass # NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
+                
+                elif self.meta.ndims == 1:
+                    # calculate offsets
+                    buffer_offset = self.meta.typeSize * self.hyperslice[0][0]
+                    chunk_offset = curr_node['slice'][0] * self.meta.typeSize
 
                     # calculate buffer index - offset into data buffer to put chunked data
                     buffer_index = 0
@@ -1853,29 +1957,29 @@ class H5Dataset:
                     if self.resourceObject.verbose:
                         log.debug(f'Chunk Offset:         {chunk_offset} ({int(chunk_offset/self.meta.typeSize)})')
                         log.debug(f'Buffer Index:         {buffer_index} ({int(buffer_index/self.meta.typeSize)})')
-                        log.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})')
+                        log.debug(f'Chunk Bytes:          {chunk_bytes} ({int(chunk_bytes/self.meta.typeSize)})\n')
 
                     # read chunk
                     if self.meta.filter[self.meta.DEFLATE_FILTER]:
 
                         # read data into chunk filter buffer (holds the compressed data)
-                        self.dataChunkFilterBuffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
+                        chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])
 
                         # inflate directly into data buffer
                         if (chunk_bytes == self.dataChunkBufferSize) and (not self.meta.filter[self.meta.SHUFFLE_FILTER]):
-                            buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(self.dataChunkFilterBuffer)
+                            buffer[buffer_index:buffer_index+chunk_bytes] = self.inflateChunk(chunk_buffer)
 
                         # inflate into data chunk buffer */
                         else:
-                            dataChunkBuffer = self.inflateChunk(self.dataChunkFilterBuffer)
+                            chunk_buffer = self.inflateChunk(chunk_buffer)
 
                             # shuffle data chunk buffer into data buffer
                             if self.meta.filter[self.meta.SHUFFLE_FILTER]:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(dataChunkBuffer, chunk_index, chunk_bytes, self.meta.typeSize)
+                                buffer[buffer_index:buffer_index+chunk_bytes] = self.shuffleChunk(chunk_buffer, chunk_index, chunk_bytes, self.meta.typeSize)
 
                             # copy data chunk buffer into data buffer
                             else:
-                                buffer[buffer_index:buffer_index+chunk_bytes] = dataChunkBuffer[chunk_index:chunk_index+chunk_bytes]
+                                buffer[buffer_index:buffer_index+chunk_bytes] = chunk_buffer[chunk_index:chunk_index+chunk_bytes]
 
                     # check filter options
                     elif self.resourceObject.errorChecking and self.meta.filter[self.meta.SHUFFLE_FILTER]:
@@ -1889,6 +1993,36 @@ class H5Dataset:
                     else:
                         chunk_offset_addr = child_addr + chunk_index
                         buffer[buffer_index:buffer_index+chunk_bytes] = self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes)
+                
+                elif self.meta.ndims > 1:
+
+                    # read entire chunk
+                    chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])        # read
+                    if self.meta.filter[self.meta.DEFLATE_FILTER]:                                           # if compressed
+                        chunk_buffer = self.inflateChunk(chunk_buffer)                                       #    decompress
+                        if self.meta.filter[self.meta.SHUFFLE_FILTER]:                                       # if shuffled
+                            self.shuffleChunk(chunk_buffer, 0, self.dataChunkBufferSize, self.meta.typeSize) #    reshuffle
+
+                    # get truncated slice to pull out of chunk 
+                    # (intersection of chunk_slice and hyperslice selection)
+                    chunk_slice_to_read = self.hypersliceSubset(node_slice)
+
+                    # build slice that is read
+                    read_slice = []
+                    for d in range(self.meta.ndims):
+                        x0 = abs(chunk_slice_to_read[d][0] - node_slice[d][0])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
+                        read_slice.append((x0, x1))
+
+                    # build slice that is written
+                    write_slice = []
+                    for d in range(self.meta.ndims):
+                        x0 = abs(chunk_slice_to_read[d][0] - self.hyperslice[d][0])
+                        x1 = x0 + abs(chunk_slice_to_read[d][1] - chunk_slice_to_read[d][0])
+                        write_slice.append((x0, x1))
+
+                    # read subset of chunk into return buffer
+                    self.readSlice(buffer, self.shape, write_slice, chunk_buffer, self.meta.chunkDimensions, read_slice)
 
             # goto next key
             curr_node = next_node
@@ -1911,12 +2045,6 @@ class H5Dataset:
         if self.resourceObject.errorChecking and (trailing_zero % self.meta.typeSize != 0):
             raise FatalError(f'key did not include a trailing zero: {trailing_zero}')
 
-        # set node key
-        if ndims > 0:
-            node['row_key'] = node['slice'][0]
-        else:
-            node['row_key'] = 0
-
         # return copy of node
         return node
 
@@ -1935,9 +2063,9 @@ class H5Dataset:
         output = bytearray(output_size)
         dst_index = 0
         shuffle_block_size = int(len(input) / type_size)
-        num_elements = int(output_size / type_size)
+        elements_to_shuffle = int(output_size / type_size)
         start_element = int(output_offset / type_size)
-        for element_index in range(start_element, start_element + num_elements):
+        for element_index in range(start_element, start_element + elements_to_shuffle):
             for val_index in range(0, type_size):
                 src_index = (val_index * shuffle_block_size) + element_index
                 output[dst_index] = input[src_index]

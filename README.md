@@ -17,9 +17,7 @@
 
 For a full list of which parts of the HDF5 specification **h5coro** implements, see the [compatibility](#compatibility) section at the end of this readme.  The major limitations currently present in the package are:
 * The code only implements a subset of the HDF5 specification.  **h5coro** has been shown to work on a number of different datasets, but depending on the version of the HDF5 C library used to write the file, and what options were used during its creation, it is very possible that some part of **h5coro** will need to be updated to support reading it.  Hopefully, over time as more of the spec is implemented, this will become less of a problem.
-* The code is not optimized for local file access.  If you are reading data that is local, you will get much better performance from `h5py`.
 * It is a read-only library and has no functionality to write HDF5 data.
-* It targets one dimensional datasets and is not optimized for high dimensionality data.  In practice this means that if you subset a dataset that is two or more dimensions, only the first dimension will be subsetted with all of the other dimensions collapsed into one serial array of elements.  This limitation will be addressed in future releases.
 
 ## Installation
 
@@ -59,8 +57,8 @@ from h5coro import h5coro, s3driver
 h5obj = h5coro.H5Coro(f'{my_bucket}/{path_to_hdf5_file}', s3driver.S3Driver)
 
 # (3) read
-datasets = [{'dataset': '/path/to/dataset1', 'startrow': 0, 'numrows': h5coro.ALL_ROWS},
-            {'dataset': '/path/to/dataset2', 'startrow': 324, 'numrows': 50}]
+datasets = [{'dataset': '/path/to/dataset1', 'hyperslice': []},
+            {'dataset': '/path/to/dataset2', 'hyperslice': [324, 374]}]
 promise = h5obj.readDatasets(datasets=datasets, block=True)
 
 # (4) display
@@ -154,7 +152,7 @@ We follow a standard Forking Workflow for code changes and additions. Submitted 
 | ___Bogus Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Group Info Message___  | <span style="color:red">No</span> | | Version 0 |
 | ___Filter Pipeline Message___  | <span style="color:green">Yes</span> | Version 1, 2 | |
-| ___Attribute Message___  | <span style="color:blue">Partial</span> | Version 1 | Version 2, 3 |
+| ___Attribute Message___  | <span style="color:blue">Partial</span> | Version 1, 2, 3 | Shared message support for v3 |
 | ___Object Comment Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Object Modification Time (Old) Message___  | <span style="color:red">No</span> | | Unversioned |
 | ___Shared Message Table Message___  | <span style="color:red">No</span> | | Version 0 |

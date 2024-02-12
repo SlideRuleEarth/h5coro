@@ -1,5 +1,3 @@
-"""Tests for h5 endpoint."""
-
 import earthaccess
 import pytest
 
@@ -17,6 +15,7 @@ ATL03_PUBLIC_BUCKET = "its-live-data/cloud-experiments/h5cloud/atl03/average/ori
 
 ATL03_ATTRIBUTE = "gt2l/heights/h_ph/units"
 ATL03_DATASET = "gt2l/heights/h_ph"
+ATL03_2D_DATASET = "gt2l/heights/signal_conf_ph"
 ATL03_GROUP = "gt2l/heights"
 
 
@@ -93,3 +92,11 @@ class TestIcesat2:
         assert "data_rate" in attributes
         assert type(attributes["data_rate"]) == str
         assert variables["weight_ph"]["valid_max"][0] == 255
+
+    def test_2d_var(self):
+        h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
+        promise = h5obj.readDatasets([{"dataset": ATL03_2D_DATASET, "hyperslice": [(0,10)]}], block=True, enableAttributes=False)
+        expected = [[0, -1, -1, -1, -1], [0, -1, -1, -1, -1]]
+        for row in range(len(expected)):
+            for column in range(len(expected[row])):
+                assert promise[ATL03_2D_DATASET][row][column] == expected[row][column]

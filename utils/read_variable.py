@@ -28,9 +28,12 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import h5coro
-from utils import args, credentials
+from utils import args, credentials, execute
 
-h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials)
-promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
-for variable in promise:
-    print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
+def main():
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials, multiProcess=args.multiProcess)
+    promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=args.enableAttributes)
+    for variable in promise:
+        print(f'{variable}: {promise[variable][args.slice[0]:args.slice[1]]}')
+
+execute(main)

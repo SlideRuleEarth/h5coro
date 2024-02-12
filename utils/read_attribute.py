@@ -27,35 +27,13 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import xarray as xr
-import earthaccess
-from h5coro.datasets import icesat2
-from utils import args, execute
+import h5coro
+from utils import args, credentials, execute
 
 def main():
-
-    # select conversions for xarray to perform
-    if args.conversions:
-        col_convs = {"delta_time": icesat2.to_datetime}
-    else:
-        col_convs = {}
-
-    # get credentials to access resources in Earthdata Cloud
-    auth = earthaccess.login()
-    creds = auth.get_s3_credentials(daac=args.daac)
-
-    # open up resource as xarray
-    ds = xr.open_dataset( args.granule, 
-                          engine='h5coro', 
-                          group=args.group, 
-                          pick_variables=args.pick, 
-                          col_convs=col_convs, 
-                          credentials=creds, 
-                          log_level=args.loglevel, 
-                          verbose=args.verbose,
-                          multi_process=args.multiProcess )
-
-    # display xarray
-    print(ds)
+    h5obj = h5coro.H5Coro(args.granule, args.driver, errorChecking=args.checkErrors, verbose=args.verbose, credentials=credentials, multiProcess=args.multiProcess)
+    promise = h5obj.readDatasets(args.variables, block=True, enableAttributes=True)
+    for attribute in promise:
+        print(f'{attribute}: {promise[attribute]}')
 
 execute(main)

@@ -33,7 +33,7 @@ from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
-import concurrent.futures
+from concurrent.futures import as_completed, ThreadPoolExecutor
 
 ###############################################################################
 # CONSTANTS
@@ -58,7 +58,7 @@ def inspectThread(resourceObject, path, w_attr):
         _, attributes, metadata = resourceObject.inspectPath(path, w_attr=w_attr)
         return path, metadata, attributes
     except RuntimeError as e:
-        log.warning(f'H5Coro encountered an error inspecting {path}: {e}')
+        log.warn(f'H5Coro encountered an error inspecting {path}: {e}')
         return path, H5Metadata(), {}
 
 def isolateElement(path, group):
@@ -82,18 +82,19 @@ class H5Coro:
     #######################
     def __init__(self,
         resource,
-        driver_class,
+        driverClass,
         credentials={},
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
-        verbose = VERBOSE_DEFAULT
-
+        verbose = VERBOSE_DEFAULT,
+        multiProcess = False
     ):
         self.resource = resource
-        self.driver = driver_class(resource, credentials)
+        self.driver = driverClass(resource, credentials)
 
         self.errorChecking = errorChecking
         self.verbose = verbose
+        self.multiProcess = multiProcess
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
@@ -116,17 +117,17 @@ class H5Coro:
             return
 
         # make into dictionary
-        datasetTable = {}
+        dataset_table = {}
         for dataset in datasets:
             if type(dataset) == str:
                 dataset = massagePath(dataset)
-                datasetTable[dataset] = {"dataset": dataset, "startrow": 0, "numrows": H5Dataset.ALL_ROWS}
+                dataset_table[dataset] = {"dataset": dataset, "hyperslice": []}
             else:
                 dataset["dataset"] = massagePath(dataset["dataset"])
-                datasetTable[dataset["dataset"]] = dataset
+                dataset_table[dataset["dataset"]] = dataset
 
         # return promise
-        return H5Promise(self, datasetTable, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
+        return H5Promise(self, dataset_table, block, earlyExit=earlyExit, metaOnly=metaOnly, enableAttributes=enableAttributes)
 
     #######################
     # readPath
@@ -177,9 +178,9 @@ class H5Coro:
         links, attributes, _ = self.inspectPath(path, w_attr)
         # inspect each link to get metadata, attributes, group info, etc
         if len(links) > 0:
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
-            futures = [executor.submit(inspectThread, self, os.path.join(path, link), w_attr) for link in links]
-            for future in concurrent.futures.as_completed(futures):
+            executor = ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
+            futures = [executor.submit(inspectThread, self, f'{path}/{link}', w_attr) for link in links]
+            for future in as_completed(futures):
                 name, metadata, attrs = future.result() # overwrites attribute set
                 element = isolateElement(name, path)
                 if metadata == None: # group
