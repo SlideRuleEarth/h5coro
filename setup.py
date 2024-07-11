@@ -20,7 +20,7 @@ setup(
     author='SlideRule Developers',
     description='Python package for reading HDF5 data from S3',
     long_description_content_type="text/markdown",
-    url='https://github.com/ICESat2-SlideRule/h5coro/',
+    url='https://github.com/SlideRuleEarth/h5coro/',
     license='BSD 3-Clause',
     classifiers=[
         'Development Status :: 3 - Alpha',

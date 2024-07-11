@@ -1997,11 +1997,11 @@ class H5Dataset:
                 elif self.meta.ndims > 1:
 
                     # read entire chunk
-                    chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])        # read
-                    if self.meta.filter[self.meta.DEFLATE_FILTER]:                                           # if compressed
-                        chunk_buffer = self.inflateChunk(chunk_buffer)                                       #    decompress
-                        if self.meta.filter[self.meta.SHUFFLE_FILTER]:                                       # if shuffled
-                            self.shuffleChunk(chunk_buffer, 0, self.dataChunkBufferSize, self.meta.typeSize) #    reshuffle
+                    chunk_buffer = self.resourceObject.ioRequest(child_addr, curr_node['chunk_size'])                       # read
+                    if self.meta.filter[self.meta.DEFLATE_FILTER]:                                                          # if compressed
+                        chunk_buffer = self.inflateChunk(chunk_buffer)                                                      #    decompress
+                        if self.meta.filter[self.meta.SHUFFLE_FILTER]:                                                      # if shuffled
+                            chunk_buffer = self.shuffleChunk(chunk_buffer, 0, self.dataChunkBufferSize, self.meta.typeSize) #    reshuffle
 
                     # get truncated slice to pull out of chunk 
                     # (intersection of chunk_slice and hyperslice selection)
