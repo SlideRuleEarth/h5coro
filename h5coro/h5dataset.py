@@ -1778,7 +1778,7 @@ class H5Dataset:
             node_start = sum([node_slice_in_chunks[d][0] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
             node_end = sum([node_slice_in_chunks[d][1] * self.chunkStepSize[d] for d in range(self.meta.ndims)])
             # check for intersection of position
-            if node_end < self.hypersliceChunkStart or node_start >= self.hypersliceChunkEnd:
+            if node_end < self.hypersliceChunkStart or node_start > self.hypersliceChunkEnd:
                 return False
             return True
 
@@ -1911,7 +1911,6 @@ class H5Dataset:
 
             # check inclusion
             if self.hypersliceIntersection(node_slice, node_level):
-
                 # display
                 if self.resourceObject.verbose:
                     log.info(f'entry {node_level}.{e+1} of selected')

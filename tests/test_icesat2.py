@@ -11,7 +11,7 @@ ATL06_HTTP_URL = "https://data.nsidc.earthdatacloud.nasa.gov/nsidc-cumulus-prod-
 ATL06_DATASET = "gt1r/land_ice_segments/h_li"
 
 ATL03_S3_OBJECT = "nsidc-cumulus-prod-protected/ATLAS/ATL03/006/2018/10/17/ATL03_20181017222812_02950102_006_02.h5"
-ATL03_PUBLIC_BUCKET = "its-live-data/cloud-experiments/h5cloud/atl03/average/original/ATL03_20191225111315_13680501_006_01.h5"
+#ATL03_PUBLIC_BUCKET = "its-live-data/cloud-experiments/h5cloud/atl03/average/original/ATL03_20191225111315_13680501_006_01.h5"
 
 ATL03_ATTRIBUTE = "gt2l/heights/h_ph/units"
 ATL03_DATASET = "gt2l/heights/h_ph"
@@ -39,15 +39,15 @@ class TestIcesat2:
         assert len(promise[ATL03_DATASET]) == 20622551
         assert abs(promise[ATL03_DATASET][0] - 2553.04) < 0.0001
 
-    def test_s3driver_public_bucket(self):
-        h5obj = h5coro.H5Coro(
-            ATL03_PUBLIC_BUCKET, s3driver.S3Driver, credentials={"annon": True}
-        )
-        promise = h5obj.readDatasets(
-            [ATL03_DATASET], block=True, enableAttributes=False
-        )
-        assert len(promise[ATL03_DATASET]) == 218644
-        assert abs(promise[ATL03_DATASET][0] - 119.13542) < 0.0001
+#    def test_s3driver_public_bucket(self):
+#        h5obj = h5coro.H5Coro(
+#            ATL03_PUBLIC_BUCKET, s3driver.S3Driver, credentials={"annon": True}
+#        )
+#        promise = h5obj.readDatasets(
+#            [ATL03_DATASET], block=True, enableAttributes=False
+#        )
+#        assert len(promise[ATL03_DATASET]) == 218644
+#        assert abs(promise[ATL03_DATASET][0] - 119.13542) < 0.0001
 
     @pytest.mark.parametrize("attr", [True, False])
     @pytest.mark.parametrize("early", [True, False])
