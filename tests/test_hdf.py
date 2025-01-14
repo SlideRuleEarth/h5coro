@@ -2,7 +2,7 @@ import pytest
 import h5coro
 from h5coro import s3driver
 
-HDF_OBJECT = "docs.hdfgroup.org/hdf5/h5/ou_process.h5"
+HDF_OBJECT = "sliderule/data/test/ou_process.h5"
 
 @pytest.mark.region
 class TestHDF:
