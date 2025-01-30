@@ -9,3 +9,6 @@ class FileDriver:
         self.f.seek(pos)
         return self.f.read(size)
 
+    def copy(self):
+        return FileDriver(self.resource, None)
+
