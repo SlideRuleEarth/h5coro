@@ -1,7 +1,6 @@
 import pytest
 import h5coro
-from h5coro import s3driver
-from h5coro import filedriver
+from h5coro import s3driver, filedriver, webdriver
 import boto3
 import os
 import numpy as np
@@ -84,17 +83,31 @@ class TestHDF:
     def test_dataset_read(self, multiProcess):
         """Reads datasets from S3 and local file with multiProcess enabled/disabled, then compares the results."""
 
-        # Step 1: Read from S3
-        print(f"\nReading datasets from S3 with multiProcess={multiProcess}...")
-        s3_results = self.read_datasets(HDF_OBJECT_S3[5:], driver=s3driver.S3Driver, multiProcess=multiProcess)
-
-        # Step 2: Download the file to the local system
+        # Step 1: Download the file to the local system
         local_file = self.download_hdf_to_local()
 
-        # Step 3: Read from the local file
-        print(f"\nReading datasets from local file with multiProcess={multiProcess}...")
+        # Step 2: Read from the local file
+        print(f"\nReading datasets with filedriver, multiProcess={multiProcess}")
         local_results = self.read_datasets(local_file, driver=filedriver.FileDriver, multiProcess=multiProcess)
 
-        # Step 4: Compare results
-        print("\nComparing results between S3 and local reads...")
+        # Step 3: Read from S3
+        print(f"Reading datasets with s3driver, multiProcess={multiProcess}")
+        s3_results = self.read_datasets(HDF_OBJECT_S3[5:], driver=s3driver.S3Driver, multiProcess=multiProcess)
+
+        # Step 4: Read using WebDriver
+        # Generate a pre-signed URL to the same test file
+        s3 = boto3.client("s3", region_name="us-west-2")
+        pre_signed_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": "sliderule", "Key": "data/test/ATL03_20200401184200_00950707_005_01.h5"},
+            ExpiresIn=3600  # URL valid for 1 hour
+        )
+        print(f"Reading datasets with webdriver, multiProcess={multiProcess}")
+        webdriver_results = self.read_datasets(pre_signed_url, driver=webdriver.HTTPDriver, multiProcess=multiProcess)
+
+        # Step 5: Compare results
+        print("Comparing results between s3driver and filedriver reads")
         self.compare_results(s3_results, local_results)
+
+        print("Comparing results between webdriver and filedriver reads")
+        self.compare_results(webdriver_results, local_results)
