@@ -12,17 +12,17 @@ HDF_OBJECT_S3    = "s3://sliderule/data/test/ATL03_20200401184200_00950707_005_0
 HDF_OBJECT_LOCAL = "/tmp/ATL03_20200401184200_00950707_005_01.h5"
 
 DATASET_PATHS = [
-   "/gt1l/heights/delta_time"
-   "/gt1l/heights/dist_ph_across"
-   "/gt1l/heights/dist_ph_along"
-   "/gt1l/heights/h_ph"
-   "/gt1l/heights/lat_ph"
-   "/gt1l/heights/lon_ph"
-   "/gt1l/heights/pce_mframe_cnt"
-   "/gt1l/heights/ph_id_channel"
-   "/gt1l/heights/ph_id_count"
-   "/gt1l/heights/ph_id_pulse"
-   "/gt1l/heights/quality_ph"
+   "/gt1l/heights/delta_time",
+   "/gt1l/heights/dist_ph_across",
+   "/gt1l/heights/dist_ph_along",
+   "/gt1l/heights/h_ph",
+   "/gt1l/heights/lat_ph",
+   "/gt1l/heights/lon_ph",
+   "/gt1l/heights/pce_mframe_cnt",
+   "/gt1l/heights/ph_id_channel",
+   "/gt1l/heights/ph_id_count",
+   "/gt1l/heights/ph_id_pulse",
+   "/gt1l/heights/quality_ph",
    "/gt1l/heights/signal_conf_ph"
 ]
 
@@ -46,11 +46,17 @@ class TestHDF:
 
         return HDF_OBJECT_LOCAL
 
-    def compare_results(self, actual_results, expected_results):
+    def compare_results(self, h5coro_results, h5py_results):
         """Compares the results between two datasets."""
-        for dataset in expected_results:
-            expected_data = expected_results[dataset]
-            actual_data = actual_results.get(dataset)
+        for dataset in h5py_results:
+            expected_data = h5py_results[dataset]
+
+            # Normalize the dataset paths by stripping leading slashes in h5py results
+            normalized_dataset = dataset.lstrip('/')
+            actual_data = h5coro_results.get(normalized_dataset)
+
+            if actual_data is None:
+                raise AssertionError(f"Dataset '{dataset}' not found in actual results")
 
             # Use numpy's array comparison if both data are arrays
             if isinstance(expected_data, np.ndarray) and isinstance(actual_data, np.ndarray):
@@ -130,10 +136,10 @@ class TestHDF:
         # Step 6: Check the results against h5py results
         print("Check results:")
         print("\tfiledriver vs h5py")
-        self.compare_results(filedriver_results, h5py_results)
+        self.compare_results(h5coro_results=filedriver_results, h5py_results=h5py_results)
 
         print("\ts3driver   vs h5py")
-        self.compare_results(s3driver_results, h5py_results)
+        self.compare_results(h5coro_results=s3driver_results, h5py_results=h5py_results)
 
         print("\twebdriver  vs h5py")
-        self.compare_results(webdriver_results, h5py_results)
+        self.compare_results(h5coro_results=webdriver_results, h5py_results=h5py_results)
