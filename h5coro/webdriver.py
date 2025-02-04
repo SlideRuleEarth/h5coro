@@ -32,12 +32,23 @@ class HTTPDriver:
         Returns:
             class HTTPDriver: reader that can access NASA data out of us-west-2
         """
+        # Store the credentials for reuse
+        self.cached_credentials = credentials
+
         # construct path to resource
         self.resource = resource
         self.session = requests.Session()
         if type(credentials) is str:
             self.token = credentials
             self.session.headers.update({"Authorization": f"Bearer {self.token}"})
+
+     #######################
+    # Copy Constructor
+    #######################
+    def copy(self):
+        """Create and return a copy of the current HTTPDriver instance."""
+        new_driver = HTTPDriver(self.resource, self.cached_credentials)
+        return new_driver
 
     #######################
     # read

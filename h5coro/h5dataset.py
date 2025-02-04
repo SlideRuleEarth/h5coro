@@ -66,6 +66,8 @@ class FatalError(RuntimeError):
 ###############################################################################
 
 def BTreeReader(dataset, buffer, level):
+    # Create new io driver for this process
+    dataset.resourceObject.driver = dataset.resourceObject.driver.copy()
     dataset.readBTreeV1(buffer, level)
 
 ###############################################################################
@@ -139,7 +141,7 @@ class H5Dataset:
         dataset_level = 0
 
         # get metadata for dataset
-        if self.dataset in self.resourceObject.metadataTable:            
+        if self.dataset in self.resourceObject.metadataTable:
             self.meta = self.resourceObject.metadataTable[self.dataset]
         # metadata not available
         if self.meta.typeSize == 0 or not earlyExit:
@@ -180,7 +182,7 @@ class H5Dataset:
                     raise FatalError(f'invalid hyperslice, must provide as list of ranges [x,y), got {self.hyperslice}')
             else:
                 self.hyperslice.append((0, self.meta.dimensions[d]))
-            
+
             # check for valid hyperslice
             if (self.hyperslice[d][1] < self.hyperslice[d][0]) or \
                (self.hyperslice[d][1] > self.meta.dimensions[d]) or \
@@ -275,7 +277,7 @@ class H5Dataset:
             self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
         else:
             log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
-            
+
     #######################
     # Destructor
     #######################
@@ -380,7 +382,7 @@ class H5Dataset:
         # check mata data table
         for lvl in range(self.datasetPathLevels, dlvl, -1):
             group_path = '/'.join(self.datasetPath[:lvl])
-            if group_path in self.resourceObject.pathAddresses:                
+            if group_path in self.resourceObject.pathAddresses:
                 self.pos = self.resourceObject.pathAddresses[group_path]
                 dlvl = lvl
                 break
@@ -791,7 +793,7 @@ class H5Dataset:
                 vl_type = databits & 0xF # variable length type
                 padding = (databits & 0xF0) >> 4
                 charset = (databits & 0xF00) >> 8
-                
+
                 vl_type_str = "unknown"
                 if vl_type == 0:
                     vl_type_str = "Sequence"
@@ -820,7 +822,7 @@ class H5Dataset:
             vlen_type_size  = meta.typeSize
             vlen_type       = meta.type
             vlen_signedval  = meta.signedval
-            
+
             # recursively call datatype message
             self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
         # String
@@ -1364,7 +1366,7 @@ class H5Dataset:
                 self.pos += 6
 
         # reset position and return bytes read
-        self.pos = return_position 
+        self.pos = return_position
         return return_position - starting_position
 
     #######################
@@ -1921,11 +1923,11 @@ class H5Dataset:
                     self.pos = child_addr
                     self.readBTreeV1(buffer, dlvl)
                     self.pos = return_position
-                
+
                 elif self.meta.ndims == 0:
                     log.warn(f'Unexpected chunked read of a zero dimensional dataset')
                     pass # NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
-                
+
                 elif self.meta.ndims == 1:
                     # calculate offsets
                     buffer_offset = self.meta.typeSize * self.hyperslice[0][0]
@@ -1992,7 +1994,7 @@ class H5Dataset:
                     else:
                         chunk_offset_addr = child_addr + chunk_index
                         buffer[buffer_index:buffer_index+chunk_bytes] = self.resourceObject.ioRequest(chunk_offset_addr, chunk_bytes)
-                
+
                 elif self.meta.ndims > 1:
 
                     # read entire chunk
@@ -2002,7 +2004,7 @@ class H5Dataset:
                         if self.meta.filter[self.meta.SHUFFLE_FILTER]:                                                      # if shuffled
                             chunk_buffer = self.shuffleChunk(chunk_buffer, 0, self.dataChunkBufferSize, self.meta.typeSize) #    reshuffle
 
-                    # get truncated slice to pull out of chunk 
+                    # get truncated slice to pull out of chunk
                     # (intersection of chunk_slice and hyperslice selection)
                     chunk_slice_to_read = self.hypersliceSubset(node_slice)
 
