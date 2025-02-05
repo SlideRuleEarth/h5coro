@@ -7,9 +7,11 @@ import numpy as np
 import sys
 import copy
 import h5py
+import hashlib
 
-HDF_OBJECT_S3    = "s3://sliderule/data/test/ATL03_20200401184200_00950707_005_01.h5"
-HDF_OBJECT_LOCAL = "/tmp/ATL03_20200401184200_00950707_005_01.h5"
+HDF_OBJECT_S3     = "s3://sliderule/data/test/ATL03_20200401184200_00950707_005_01.h5"
+HDF_OBJECT_LOCAL  = "/tmp/ATL03_20200401184200_00950707_005_01.h5"
+HDF_OBJECT_MD5SUM = "b0945a316dd02c18cb86fd7f207c0c54"
 
 DATASET_PATHS = [
    "/gt1l/heights/delta_time",
@@ -29,20 +31,46 @@ DATASET_PATHS = [
 HYPERSLICES = [[100, 5100]]
 HYPERSLICES_2D = [[100, 5100], [0, 2]]
 
+
+def compute_md5(file_path):
+    """Compute the MD5 checksum of a file."""
+    md5_hash = hashlib.md5()
+    with open(file_path, "rb") as file:
+        for chunk in iter(lambda: file.read(4096), b""):
+            md5_hash.update(chunk)
+    return md5_hash.hexdigest()
+
+def validate_file_md5(file_path, expected_checksum):
+    """Validate the MD5 checksum of the file against the expected checksum."""
+    computed_checksum = compute_md5(file_path)
+    if computed_checksum != expected_checksum:
+        raise ValueError(
+            f"Checksum mismatch for {file_path}! "
+            f"Expected: {expected_checksum}, Got: {computed_checksum}"
+        )
+    print(f"MD5 checksum valid for {file_path}")
+
+
 @pytest.mark.region
 @pytest.mark.parametrize("multiProcess", [False, True])
 class TestHDF:
 
     def download_hdf_to_local(self):
-        """Downloads the HDF file to the local system if not already present."""
-        if not os.path.exists(HDF_OBJECT_LOCAL):
-            print("\nDownloading HDF object to local temp directory...")
-            s3_url_parts = HDF_OBJECT_S3.replace("s3://", "").split("/", 1)
-            bucket_name = s3_url_parts[0]
-            key = s3_url_parts[1]
+        # Validate the file if it already exists
+        if os.path.exists(HDF_OBJECT_LOCAL):
+            validate_file_md5(HDF_OBJECT_LOCAL, HDF_OBJECT_MD5SUM)
+            return HDF_OBJECT_LOCAL
 
-            s3 = boto3.client("s3")
-            s3.download_file(bucket_name, key, HDF_OBJECT_LOCAL)
+        """Downloads the HDF file to the local system if not already present."""
+        print("\nDownloading HDF object to local temp directory...")
+        s3_url_parts = HDF_OBJECT_S3.replace("s3://", "").split("/", 1)
+        bucket_name = s3_url_parts[0]
+        key = s3_url_parts[1]
+
+        s3 = boto3.client("s3")
+        s3.download_file(bucket_name, key, HDF_OBJECT_LOCAL)
+
+        validate_file_md5(HDF_OBJECT_LOCAL, HDF_OBJECT_MD5SUM)
 
         return HDF_OBJECT_LOCAL
 
