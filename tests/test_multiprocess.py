@@ -102,11 +102,16 @@ class TestHDF:
             ExpiresIn=36000 # 10 hours for long test runs
         )
 
+        cls.datasets = [
+            {'dataset': DATASET_PATHS[i], 'hyperslice': HYPERSLICES if i < 11 else HYPERSLICES_2D}
+            for i in range(len(DATASET_PATHS))
+        ]
 
-    def compare_results(self, h5coro_results, h5py_results):
+
+    def compare_results(self, h5coro_results):
         """Compares the results between two datasets."""
-        for dataset in h5py_results:
-            expected_data = h5py_results[dataset]
+        for dataset in self.h5py_results:
+            expected_data = self.h5py_results[dataset]
 
             # Normalize the dataset paths by stripping leading slashes in h5py results
             normalized_dataset = dataset.lstrip('/')
@@ -122,45 +127,6 @@ class TestHDF:
                 # Compare non-array data directly
                 assert expected_data == actual_data, f"Mismatch in dataset: {dataset}"
 
-    def read_with_h5py(self, file_path):
-        """Reads datasets using h5py and returns the results."""
-        results = {}
-        with h5py.File(file_path, 'r') as hdf_file:
-            for dataset_path in DATASET_PATHS:
-                if dataset_path in hdf_file:
-                    dataset = hdf_file[dataset_path]
-
-                    # Check if dataset is 2D or 1D and apply the appropriate hyperslice
-                    if dataset.ndim == 1:
-                        results[dataset_path] = dataset[HYPERSLICES[0][0]:HYPERSLICES[0][1]]
-                    elif dataset.ndim == 2:
-                        results[dataset_path] = dataset[HYPERSLICES_2D[0][0]:HYPERSLICES_2D[0][1],
-                                                        HYPERSLICES_2D[1][0]:HYPERSLICES_2D[1][1]]
-        return results
-
-
-    def read_datasets(self, hdf_object, driver, multiProcess):
-        """Reads datasets from the specified HDF object and driver."""
-        datasets = [
-            {'dataset': DATASET_PATHS[i], 'hyperslice': HYPERSLICES if i < 11 else HYPERSLICES_2D}
-            for i in range(len(DATASET_PATHS))
-        ]
-
-        # Initialize the H5Coro object and read the datasets
-        h5obj = h5coro.H5Coro(hdf_object, driver, errorChecking=True, multiProcess=multiProcess)
-        promise = h5obj.readDatasets(datasets, block=True)
-
-        # Collect and return results
-        # results = {dataset: promise[dataset] for dataset in promise}
-        # NOTE: This line causes a resource_tracker warnings about leaking shared memory objects
-        # Running 'ipcs -m' after the test ends shows no shared memory objects are left so the warning is harmless?
-        # For now, to avoid this warning, deep copy the results into regular memory
-
-        # Deep copy the results into regular memory
-        results = copy.deepcopy({dataset: promise[dataset] for dataset in promise})
-
-        return results
-
     def test_dataset_read(self, multiProcess):
         """Reads datasets from S3 and local file with multiProcess enabled/disabled, then compares the results."""
 
@@ -168,26 +134,27 @@ class TestHDF:
 
         # Step 1: Read from the local file
         start_time = time.perf_counter()
-        filedriver_results = self.read_datasets(self.local_file, driver=filedriver.FileDriver, multiProcess=multiProcess)
+        h5obj = h5coro.H5Coro(self.local_file, filedriver.FileDriver, errorChecking=True, multiProcess=multiProcess)
+        promise = h5obj.readDatasets(self.datasets, block=True)
+        results = {dataset: promise[dataset] for dataset in promise}
         print(f"filedriver read: {time.perf_counter() - start_time:.2f} seconds")
+        self.compare_results(results)
+        results = None  # Must be set to None to avoid shared memory leaks warnings
 
         # Step 2: Read from S3
         start_time = time.perf_counter()
-        s3driver_results = self.read_datasets(HDF_OBJECT_S3[5:], driver=s3driver.S3Driver, multiProcess=multiProcess)
+        h5obj = h5coro.H5Coro(HDF_OBJECT_S3[5:], s3driver.S3Driver, errorChecking=True, multiProcess=multiProcess)
+        promise = h5obj.readDatasets(self.datasets, block=True)
+        results = {dataset: promise[dataset] for dataset in promise}
         print(f"s3driver read:   {time.perf_counter() - start_time:.2f} seconds")
+        self.compare_results(results)
+        results = None
 
-        # Step 3: Read using WebDriver
+        # # # Step 3: Read using WebDriver
         start_time = time.perf_counter()
-        webdriver_results = self.read_datasets(self.pre_signed_url, driver=webdriver.HTTPDriver, multiProcess=multiProcess)
+        h5obj = h5coro.H5Coro(self.pre_signed_url, webdriver.HTTPDriver, errorChecking=True, multiProcess=multiProcess)
+        promise = h5obj.readDatasets(self.datasets, block=True)
+        results = {dataset: promise[dataset] for dataset in promise}
         print(f"webdriver read:  {time.perf_counter() - start_time:.2f} seconds")
-
-        # Step 6: Check the results against h5py results
-        # print("Check results:")
-        # print("\tfiledriver vs h5py")
-        self.compare_results(h5coro_results=filedriver_results, h5py_results=self.h5py_results)
-
-        # print("\ts3driver   vs h5py")
-        self.compare_results(h5coro_results=s3driver_results, h5py_results=self.h5py_results)
-
-        # print("\twebdriver  vs h5py")
-        self.compare_results(h5coro_results=webdriver_results, h5py_results=self.h5py_results)
+        self.compare_results(results)
+        results = None
