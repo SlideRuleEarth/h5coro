@@ -28,12 +28,14 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import threading
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 from concurrent.futures import as_completed, ThreadPoolExecutor
+from collections import defaultdict
 
 ###############################################################################
 # CONSTANTS
@@ -99,6 +101,7 @@ class H5Coro:
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
 
+        self.cache_locks = defaultdict(threading.Lock)  # Per-cache-line locks
         self.cache = {}
         self.pathAddresses = {}
         self.metadataTable = {}
@@ -206,9 +209,23 @@ class H5Coro:
             while data_to_read > 0:
                 # Calculate Cache Line
                 cache_line = (pos + self.baseAddress) & self.cacheLineMask
-                # Populate Cache (if not there already)
-                if cache_line not in self.cache:
-                    self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
+
+                # NOTE: Fix this, multiProcess should be the same as not multiProcess
+                if self.multiProcess:
+                    if cache_line not in self.cache:
+                        self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
+                else:
+                    # First check without locking (fast path)
+                    if cache_line not in self.cache:
+                        # Lock only around expensive read operations for the cache line
+                        with self.cache_locks[cache_line]:
+                            # Check again inside the lock to avoid race conditions
+                            if cache_line not in self.cache:
+                                self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
+
+                # Get Cached Data
+                data_view = self.cache[cache_line]
+
                 # Update Indexes
                 start_index = (pos + self.baseAddress) - cache_line
                 stop_index = min(start_index + data_to_read, self.cacheLineSize)

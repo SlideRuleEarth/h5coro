@@ -8,6 +8,7 @@ import sys
 import copy
 import h5py
 import hashlib
+import time
 
 HDF_OBJECT_S3     = "s3://sliderule/data/test/ATL03_20200401184200_00950707_005_01.h5"
 HDF_OBJECT_LOCAL  = "/tmp/ATL03_20200401184200_00950707_005_01.h5"
@@ -51,28 +52,56 @@ def validate_file_md5(file_path, expected_checksum):
     print(f"MD5 checksum valid for {file_path}")
 
 
+def download_hdf_to_local():
+    if os.path.exists(HDF_OBJECT_LOCAL):
+        return HDF_OBJECT_LOCAL
+
+    print("\nDownloading HDF object to local temp directory...")
+    s3_url_parts = HDF_OBJECT_S3.replace("s3://", "").split("/", 1)
+    bucket_name = s3_url_parts[0]
+    key = s3_url_parts[1]
+
+    s3 = boto3.client("s3")
+    s3.download_file(bucket_name, key, HDF_OBJECT_LOCAL)
+    validate_file_md5(HDF_OBJECT_LOCAL, HDF_OBJECT_MD5SUM)
+
+    return HDF_OBJECT_LOCAL
+
+def read_with_h5py(file_path):
+    results = {}
+    with h5py.File(file_path, 'r') as hdf_file:
+        for dataset_path in DATASET_PATHS:
+            if dataset_path in hdf_file:
+                dataset = hdf_file[dataset_path]
+
+                # Check if dataset is 2D or 1D and apply the appropriate hyperslice
+                if dataset.ndim == 1:
+                    results[dataset_path] = dataset[HYPERSLICES[0][0]:HYPERSLICES[0][1]]
+                elif dataset.ndim == 2:
+                    results[dataset_path] = dataset[
+                        HYPERSLICES_2D[0][0]:HYPERSLICES_2D[0][1],
+                        HYPERSLICES_2D[1][0]:HYPERSLICES_2D[1][1]
+                    ]
+    return results
+
+
 @pytest.mark.region
 @pytest.mark.parametrize("multiProcess", [False, True])
 class TestHDF:
+    @classmethod
+    def setup_class(cls):
+        """Set up the class by downloading the file and reading with h5py."""
+        cls.local_file = download_hdf_to_local()
+        cls.h5py_results = read_with_h5py(cls.local_file)
 
-    def download_hdf_to_local(self):
-        # Validate the file if it already exists
-        if os.path.exists(HDF_OBJECT_LOCAL):
-            validate_file_md5(HDF_OBJECT_LOCAL, HDF_OBJECT_MD5SUM)
-            return HDF_OBJECT_LOCAL
+        # Create a pre-signed URL
+        cls.s3 = boto3.client("s3", region_name="us-west-2")
+        cls.pre_signed_url = cls.s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": "sliderule", "Key": "data/test/ATL03_20200401184200_00950707_005_01.h5"},
+            ExpiresIn=36000 # 10 hours for long test runs
+        )
 
-        """Downloads the HDF file to the local system if not already present."""
-        print("\nDownloading HDF object to local temp directory...")
-        s3_url_parts = HDF_OBJECT_S3.replace("s3://", "").split("/", 1)
-        bucket_name = s3_url_parts[0]
-        key = s3_url_parts[1]
-
-        s3 = boto3.client("s3")
-        s3.download_file(bucket_name, key, HDF_OBJECT_LOCAL)
-
-        validate_file_md5(HDF_OBJECT_LOCAL, HDF_OBJECT_MD5SUM)
-
-        return HDF_OBJECT_LOCAL
 
     def compare_results(self, h5coro_results, h5py_results):
         """Compares the results between two datasets."""
@@ -135,39 +164,30 @@ class TestHDF:
     def test_dataset_read(self, multiProcess):
         """Reads datasets from S3 and local file with multiProcess enabled/disabled, then compares the results."""
 
-        # Step 1: Download the file to the local system
-        local_file = self.download_hdf_to_local()
+        print(f"\nmultiProcess:    {multiProcess}")
 
-        # Step 2: Read using h5py
-        print("\nReading with h5py")
-        h5py_results = self.read_with_h5py(local_file)
+        # Step 1: Read from the local file
+        start_time = time.perf_counter()
+        filedriver_results = self.read_datasets(self.local_file, driver=filedriver.FileDriver, multiProcess=multiProcess)
+        print(f"filedriver read: {time.perf_counter() - start_time:.2f} seconds")
 
-        # Step 3: Read from the local file
-        print(f"Reading with filedriver, multiProcess={multiProcess}")
-        filedriver_results = self.read_datasets(local_file, driver=filedriver.FileDriver, multiProcess=multiProcess)
-
-        # Step 4: Read from S3
-        print(f"Reading with s3driver,   multiProcess={multiProcess}")
+        # Step 2: Read from S3
+        start_time = time.perf_counter()
         s3driver_results = self.read_datasets(HDF_OBJECT_S3[5:], driver=s3driver.S3Driver, multiProcess=multiProcess)
+        print(f"s3driver read:   {time.perf_counter() - start_time:.2f} seconds")
 
-        # Step 5: Read using WebDriver
-        # Generate a pre-signed URL to the same test file
-        s3 = boto3.client("s3", region_name="us-west-2")
-        pre_signed_url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": "sliderule", "Key": "data/test/ATL03_20200401184200_00950707_005_01.h5"},
-            ExpiresIn=3600  # URL valid for 1 hour
-        )
-        print(f"Reading with webdriver,  multiProcess={multiProcess}")
-        webdriver_results = self.read_datasets(pre_signed_url, driver=webdriver.HTTPDriver, multiProcess=multiProcess)
+        # Step 3: Read using WebDriver
+        start_time = time.perf_counter()
+        webdriver_results = self.read_datasets(self.pre_signed_url, driver=webdriver.HTTPDriver, multiProcess=multiProcess)
+        print(f"webdriver read:  {time.perf_counter() - start_time:.2f} seconds")
 
         # Step 6: Check the results against h5py results
-        print("Check results:")
-        print("\tfiledriver vs h5py")
-        self.compare_results(h5coro_results=filedriver_results, h5py_results=h5py_results)
+        # print("Check results:")
+        # print("\tfiledriver vs h5py")
+        self.compare_results(h5coro_results=filedriver_results, h5py_results=self.h5py_results)
 
-        print("\ts3driver   vs h5py")
-        self.compare_results(h5coro_results=s3driver_results, h5py_results=h5py_results)
+        # print("\ts3driver   vs h5py")
+        self.compare_results(h5coro_results=s3driver_results, h5py_results=self.h5py_results)
 
-        print("\twebdriver  vs h5py")
-        self.compare_results(h5coro_results=webdriver_results, h5py_results=h5py_results)
+        # print("\twebdriver  vs h5py")
+        self.compare_results(h5coro_results=webdriver_results, h5py_results=self.h5py_results)

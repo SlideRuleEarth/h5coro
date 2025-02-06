@@ -2,6 +2,7 @@ import logging
 
 import boto3
 from botocore.handlers import disable_signing
+from botocore.config import Config
 
 ###############################################################################
 # Globals
@@ -27,7 +28,7 @@ class S3Driver:
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, credentials):
+    def __init__(self, resource, credentials, config=None):
         # Store the credentials for reuse
         self.cached_credentials = credentials
 
@@ -37,8 +38,11 @@ class S3Driver:
         # Initialize session based on credentials
         self.session = self.create_session(credentials)
 
+        # Use the provided config or create a new one with the pool size to handle more concurrent connections
+        self.config = config or Config(max_pool_connections=50)
+
         # Open the S3 resource object
-        self.obj = self.session.resource("s3").Object(
+        self.obj = self.session.resource("s3", config=self.config).Object(
             self.resourcePath[0], "/".join(self.resourcePath[1:])
         )
 
@@ -47,7 +51,7 @@ class S3Driver:
     #######################
     def copy(self):
         resource_str = "/".join(self.resourcePath)
-        return S3Driver(resource_str, self.cached_credentials)
+        return S3Driver(resource_str, self.cached_credentials, config=self.config)
 
     #######################
     # Create Boto3 Session
