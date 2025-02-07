@@ -28,7 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
-import threading
+import multiprocessing
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
@@ -101,7 +101,8 @@ class H5Coro:
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
 
-        self.cache_locks = defaultdict(threading.Lock)  # Per-cache-line locks
+        # Per-cache line locks to avoid redundant read operations
+        self.cache_locks = defaultdict(self.create_fork_safe_lock)
         self.cache = {}
         self.pathAddresses = {}
         self.metadataTable = {}
@@ -110,6 +111,24 @@ class H5Coro:
         self.lengthSize = 0
         self.baseAddress = 0
         self.rootAddress = H5Dataset.readSuperblock(self)
+
+    #######################
+    # create_fork_safe_lock
+    #######################
+    def create_fork_safe_lock(self):
+        """Create a fork-safe multiprocessing lock and register it to be reset in the child process."""
+        lock = multiprocessing.Lock()
+        os.register_at_fork(after_in_child=lambda: self.reset_lock(lock))
+        return lock
+
+    #######################
+    # reset_lock
+    #######################
+    def reset_lock(self, lock):
+        """Reset the lock in the child process by replacing it with a new lock."""
+        new_lock = multiprocessing.Lock()
+        # We can't directly replace the lock in the `cache_locks` dictionary because the lambda has no context.
+        # Instead, new locks will automatically be created for any subsequent cache line access in the child process.
 
     #######################
     # readDatasets
@@ -210,18 +229,14 @@ class H5Coro:
                 # Calculate Cache Line
                 cache_line = (pos + self.baseAddress) & self.cacheLineMask
 
-                # NOTE: Fix this, multiProcess should be the same as not multiProcess
-                if self.multiProcess:
-                    if cache_line not in self.cache:
-                        self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
-                else:
-                    # First check without locking (fast path)
-                    if cache_line not in self.cache:
-                        # Lock only around expensive read operations for the cache line
-                        with self.cache_locks[cache_line]:
-                            # Check again inside the lock to avoid race conditions
-                            if cache_line not in self.cache:
-                                self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
+
+                # First check without locking (fast path)
+                if cache_line not in self.cache:
+                    # Lock only around expensive read operations for the cache line
+                    with self.cache_locks[cache_line]:
+                        # Check again inside the lock to avoid race conditions
+                        if cache_line not in self.cache:
+                            self.cache[cache_line] = memoryview(self.driver.read(cache_line, self.cacheLineSize))
 
                 # Get Cached Data
                 data_view = self.cache[cache_line]
