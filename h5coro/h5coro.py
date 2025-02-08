@@ -28,7 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
-import multiprocessing
+import threading
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
@@ -74,6 +74,17 @@ def isolateElement(path, group):
     return None
 
 ###############################################################################
+# Dummy Lock
+###############################################################################
+class DummyLock:
+    """A lock that does nothing, used in child processes when locks are not needed."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+###############################################################################
 # H5Coro Class
 ###############################################################################
 
@@ -116,8 +127,8 @@ class H5Coro:
     # create_fork_safe_lock
     #######################
     def create_fork_safe_lock(self):
-        """Create a fork-safe multiprocessing lock and register it to be reset in the child process."""
-        lock = multiprocessing.Lock()
+        """Create a threading lock and register it to be reset in the child process."""
+        lock = threading.Lock()
         os.register_at_fork(after_in_child=lambda: self.reset_lock(lock))
         return lock
 
@@ -125,10 +136,8 @@ class H5Coro:
     # reset_lock
     #######################
     def reset_lock(self, lock):
-        """Reset the lock in the child process by replacing it with a new lock."""
-        new_lock = multiprocessing.Lock()
-        # We can't directly replace the lock in the `cache_locks` dictionary because the lambda has no context.
-        # Instead, new locks will automatically be created for any subsequent cache line access in the child process.
+        """Replace the lock with a dummy lock in the child process."""
+        self.cache_locks = defaultdict(lambda: DummyLock())
 
     #######################
     # readDatasets

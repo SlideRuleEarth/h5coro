@@ -137,8 +137,11 @@ DATASET_PATHS = [
 ]
 
 
-HYPERSLICES = [[100, 5100]]
-HYPERSLICES_2D = [[100, 5100], [0, 2]]
+HYPERSLICES = [[100, 510]]
+HYPERSLICES_2D = [[100, 510], [0, 2]]
+
+# HYPERSLICES = [[100,  71506]]
+# HYPERSLICES_2D = [[100, 71506], [0, 2]]
 
 # Specify the datasets that require a 2D hyperslice
 DATASETS_REQUIRING_2D = {
@@ -257,14 +260,14 @@ class TestHDF:
     def test_dataset_read(self, multiProcess, block):
         """Reads datasets from S3 and local file with multiProcess enabled/disabled, then compares the results."""
 
-        print(f"\nmultiProcess: {multiProcess}, async: {not block}, {'process' if multiProcess else 'thread'} count: {self.datasets_cnt}")
+        print(f"\nmultiProcess:    {multiProcess}, async: {not block}, {'process' if multiProcess else 'thread'} count: {self.datasets_cnt}")
 
         # Step 1: Read from the local file
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(self.local_file, filedriver.FileDriver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(self.datasets, block=block)
         results = {dataset: promise[dataset] for dataset in promise}
-        print(f"filedriver read: {time.perf_counter() - start_time:.2f} seconds")
+        print(f"filedriver read: {time.perf_counter() - start_time:.2f} secs")
         self.compare_results(results)
         results = None  # Must be set to None to avoid shared memory leaks warnings
 
@@ -273,7 +276,7 @@ class TestHDF:
         h5obj = h5coro.H5Coro(HDF_OBJECT_S3[5:], s3driver.S3Driver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(self.datasets, block=block)
         results = {dataset: promise[dataset] for dataset in promise}
-        print(f"s3driver read:   {time.perf_counter() - start_time:.2f} seconds")
+        print(f"s3driver read:   {time.perf_counter() - start_time:.2f} secs")
         self.compare_results(results)
         results = None
 
@@ -282,6 +285,6 @@ class TestHDF:
         h5obj = h5coro.H5Coro(self.pre_signed_url, webdriver.HTTPDriver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(self.datasets, block=block)
         results = {dataset: promise[dataset] for dataset in promise}
-        print(f"webdriver read:  {time.perf_counter() - start_time:.2f} seconds")
+        print(f"webdriver read:  {time.perf_counter() - start_time:.2f} secs")
         self.compare_results(results)
         results = None
