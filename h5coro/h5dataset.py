@@ -67,7 +67,7 @@ class FatalError(RuntimeError):
 
 def BTreeReader(dataset, buffer, level):
     # Create new io driver for this process
-    dataset.resourceObject.driver = dataset.resourceObject.driver.copy()
+    dataset.resourceObject.driver = dataset.resourceObject.driver.copy(max_connections=1)
     dataset.readBTreeV1(buffer, level)
 
 ###############################################################################

@@ -13,6 +13,13 @@ class FileDriver:
             self.f.seek(pos)
             return self.f.read(size)
 
-    def copy(self):
+    def copy(self, max_connections=None):
         return FileDriver(self.resource, None)
+
+    def close(self):
+        with self.lock:
+            self.f.close()
+
+    def __del__(self):
+        self.close()
 

@@ -3,6 +3,8 @@ import logging
 import boto3
 from botocore.handlers import disable_signing
 from botocore.config import Config
+from botocore.exceptions import ReadTimeoutError, EndpointConnectionError
+import socket
 
 ###############################################################################
 # Globals
@@ -28,7 +30,11 @@ class S3Driver:
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, credentials, config=None):
+    def __init__(self, resource, credentials, max_connections=None):
+        # Use the default value of 50 if max_connections is not provided
+        if max_connections is None:
+            max_connections = 50
+
         # Store the credentials for reuse
         self.cached_credentials = credentials
 
@@ -38,8 +44,8 @@ class S3Driver:
         # Initialize session based on credentials
         self.session = self.create_session(credentials)
 
-        # Use the provided config or create a new one with the pool size to handle more concurrent connections
-        self.config = config or Config(max_pool_connections=50)
+        # Set up the HTTP connection pool
+        self.config = Config(max_pool_connections=max_connections, read_timeout=30, retries={"max_attempts": 3})
 
         # Open the S3 resource object
         self.obj = self.session.resource("s3", config=self.config).Object(
@@ -49,9 +55,9 @@ class S3Driver:
     #######################
     # Copy Constructor
     #######################
-    def copy(self):
+    def copy(self, max_connections=None):
         resource_str = "/".join(self.resourcePath)
-        return S3Driver(resource_str, self.cached_credentials, config=self.config)
+        return S3Driver(resource_str, self.cached_credentials, max_connections)
 
     #######################
     # Create Boto3 Session
@@ -95,5 +101,40 @@ class S3Driver:
     # read
     #######################
     def read(self, pos, size):
-        stream = self.obj.get(Range=f"bytes={pos}-{pos+size-1}")["Body"]
-        return stream.read()
+        try:
+            stream = self.obj.get(Range=f"bytes={pos}-{pos+size-1}")["Body"]
+            return stream.read()
+        except (ReadTimeoutError, socket.timeout) as e:
+            logger.error(f"Read timeout occurred: {e}")
+            raise RuntimeError("Read operation timed out") from e
+        except EndpointConnectionError as e:
+            logger.error(f"Connection error: {e}")
+            raise RuntimeError("Connection error during read operation") from e
+        except Exception as e:
+            logger.error(f"Unexpected error during read: {e}")
+            raise
+
+    #######################
+    # Close resources
+    #######################
+    def close(self):
+        """Explicitly clean up the session and S3 object."""
+        if not self._closed:
+            try:
+                # Explicitly close all HTTP connections from the boto3 session
+                http_session = self.session._session.get_component('transport')._http_session
+                http_session.close()
+
+                # Close all session-related resources
+                self.session = None
+                self.obj = None
+            except Exception as e:
+                logger.error(f"Error while cleaning up resources: {e}")
+            finally:
+                self._closed = True
+
+    #######################
+    # Destructor
+    #######################
+    def __del__(self):
+        self.close()

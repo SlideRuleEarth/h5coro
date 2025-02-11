@@ -278,3 +278,21 @@ class H5Coro:
         # Direct Read
         else:
             return self.driver.read(pos + self.baseAddress, size)
+
+    #######################
+    # close
+    #######################
+    def close(self):
+        """Explicitly clean up resources."""
+        if hasattr(self.driver, 'close'):
+            self.driver.close()
+
+        self.driver = None
+        self.cache.clear()
+        self.cache_locks.clear()
+
+    #######################
+    # Destructor
+    #######################
+    def __del__(self):
+        self.close()
