@@ -66,8 +66,11 @@ class FatalError(RuntimeError):
 ###############################################################################
 
 def BTreeReader(dataset, buffer, level):
-    # Create new io driver for this process
+    # Set dummy locks and new io driver for child processes
+    dataset.resourceObject.setDummyLocks()
     dataset.resourceObject.driver = dataset.resourceObject.driver.copy(max_connections=1)
+
+    # Read BTree
     dataset.readBTreeV1(buffer, level)
 
 ###############################################################################

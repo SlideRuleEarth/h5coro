@@ -1,6 +1,7 @@
 import logging
 
 import boto3
+import botocore
 from botocore.handlers import disable_signing
 from botocore.config import Config
 from botocore.exceptions import ReadTimeoutError, EndpointConnectionError
@@ -51,6 +52,9 @@ class S3Driver:
         self.obj = self.session.resource("s3", config=self.config).Object(
             self.resourcePath[0], "/".join(self.resourcePath[1:])
         )
+
+        # Initialize the _closed attribute to track resource closure
+        self._closed = False
 
     #######################
     # Copy Constructor
@@ -120,21 +124,20 @@ class S3Driver:
     def close(self):
         """Explicitly clean up the session and S3 object."""
         if not self._closed:
-            try:
-                # Explicitly close all HTTP connections from the boto3 session
-                http_session = self.session._session.get_component('transport')._http_session
-                http_session.close()
+            if self.session is not None:
+                try:
+                    # If resource has close method, call it
+                    if hasattr(self.obj, "close"):
+                        self.obj.close()
 
-                # Close all session-related resources
+                    # session component doesn't have a close method, this effectively closes the session
+                    boto3.DEFAULT_SESSION = None
+
+                except Exception as e:
+                    logger.warning(f"Unexpected error while closing resources: {e}")
+
+                # Ensure the session reference is removed
                 self.session = None
                 self.obj = None
-            except Exception as e:
-                logger.error(f"Error while cleaning up resources: {e}")
-            finally:
-                self._closed = True
 
-    #######################
-    # Destructor
-    #######################
-    def __del__(self):
-        self.close()
+            self._closed = True

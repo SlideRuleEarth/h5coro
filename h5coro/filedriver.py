@@ -10,6 +10,8 @@ class FileDriver:
 
     def read(self, pos, size):
         with self.lock:
+            if self.f.closed:
+                raise ValueError("File is closed")
             self.f.seek(pos)
             return self.f.read(size)
 
@@ -18,8 +20,5 @@ class FileDriver:
 
     def close(self):
         with self.lock:
-            self.f.close()
-
-    def __del__(self):
-        self.close()
-
+            if not self.f.closed:
+                self.f.close()

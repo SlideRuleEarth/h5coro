@@ -46,20 +46,13 @@ kill_process_tree() {
 cleanup() {
     echo "Ctrl+C detected! Stopping tests and killing all related processes..."
 
-    # Find the main process running the test
-    if is_pytest_file; then
-        main_pid=$(pgrep -f "pytest .*${test_file}" | head -n 1)
-    else
-        main_pid=$(pgrep -f "python .*${test_file}" | head -n 1)
-    fi
+    # Kill all pytest processes
+    pkill -9 -f "pytest"
 
-    if [ -n "$main_pid" ]; then
-        echo "Main test process: $main_pid"
-        kill_process_tree "$main_pid"
-    else
-        echo "No related processes found."
-    fi
+    # Also, make sure all Python test processes are terminated
+    pkill -9 -f "python .*${test_file}"
 
+    echo "All test processes have been killed."
     exit 1
 }
 

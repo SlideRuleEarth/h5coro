@@ -29,6 +29,7 @@
 
 import os
 import threading
+import weakref
 
 from h5coro.h5dataset import H5Dataset
 from h5coro.h5promise import H5Promise, massagePath
@@ -113,7 +114,7 @@ class H5Coro:
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
 
         # Per-cache line locks to avoid redundant read operations
-        self.cache_locks = defaultdict(self.create_fork_safe_lock)
+        self.cache_locks = defaultdict(threading.Lock)
         self.cache = {}
         self.pathAddresses = {}
         self.metadataTable = {}
@@ -123,20 +124,14 @@ class H5Coro:
         self.baseAddress = 0
         self.rootAddress = H5Dataset.readSuperblock(self)
 
-    #######################
-    # create_fork_safe_lock
-    #######################
-    def create_fork_safe_lock(self):
-        """Create a threading lock and register it to be reset in the child process."""
-        lock = threading.Lock()
-        os.register_at_fork(after_in_child=lambda: self.reset_lock(lock))
-        return lock
+        # Register automatic cleanup when the object is deleted
+        weakref.finalize(self, self._cleanup, self.driver, self.cache, self.cache_locks, log)
 
     #######################
-    # reset_lock
+    # setDummyLocks
     #######################
-    def reset_lock(self, lock):
-        """Replace the lock with a dummy lock in the child process."""
+    def setDummyLocks(self):
+        """Replace the locks with a dummy locks."""
         self.cache_locks = defaultdict(lambda: DummyLock())
 
     #######################
@@ -280,19 +275,22 @@ class H5Coro:
             return self.driver.read(pos + self.baseAddress, size)
 
     #######################
+    # _cleanup
+    #######################
+    def _cleanup(self, driver, cache, cache_locks, log):
+        """Function to clean up resources when the object is deleted."""
+        try:
+            if driver and hasattr(driver, 'close'):
+                driver.close()
+            cache.clear()
+            cache_locks.clear()
+            log.info("H5Coro resources cleaned up.")
+        except Exception as e:
+            log.error(f"Error while cleaning up resources: {e}")
+
+    #######################
     # close
     #######################
     def close(self):
-        """Explicitly clean up resources."""
-        if hasattr(self.driver, 'close'):
-            self.driver.close()
+        self._cleanup(self.driver, self.cache, self.cache_locks, log)
 
-        self.driver = None
-        self.cache.clear()
-        self.cache_locks.clear()
-
-    #######################
-    # Destructor
-    #######################
-    def __del__(self):
-        self.close()

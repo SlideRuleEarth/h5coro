@@ -120,10 +120,3 @@ class HTTPDriver:
                 logger.error(f"Error while closing adapter: {e}")
             finally:
                 self.adapter = None
-
-
-    #######################
-    # Destructor
-    #######################
-    def __del__(self):
-        self.close()
