@@ -66,12 +66,18 @@ class FatalError(RuntimeError):
 ###############################################################################
 
 def BTreeReader(dataset, buffer, level):
-    # Set dummy locks and new io driver for child processes
-    dataset.resourceObject.setDummyLocks()
-    dataset.resourceObject.driver = dataset.resourceObject.driver.copy(max_connections=1)
+    """Function executed in a forked process to read BTree."""
+    try:
+        # Set dummy locks and create a new driver
+        dataset.resourceObject.setDummyLocks()
+        dataset.resourceObject.driver = dataset.resourceObject.driver.copy(max_connections=1)
 
-    # Read BTree
-    dataset.readBTreeV1(buffer, level)
+        # Read BTree
+        dataset.readBTreeV1(buffer, level)
+    finally:
+        # Close driver
+        if dataset.resourceObject.driver is not None:
+            dataset.resourceObject.driver.close()
 
 ###############################################################################
 # H5DATASET CLASS
