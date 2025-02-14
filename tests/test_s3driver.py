@@ -31,8 +31,7 @@ def test_filedriver(multiProcess, block):
 @pytest.mark.parametrize("multiProcess, block", [(False, True)])
 def test_git_issue_31(multiProcess, block):
 
-    # datasets = ['metadata/sliderule', 'metadata/profile', 'metadata/stats']
-    datasets = ['metadata/sliderule']
+    datasets = ['metadata/sliderule', 'metadata/profile', 'metadata/stats']
 
     print(f"\nmultiProcess: {multiProcess}, async: {not block}, {'process' if multiProcess else 'thread'} count: {len(datasets)}")
 
