@@ -58,6 +58,9 @@ class H5Metadata:
     VARIABLE_LENGTH_TYPE    = 9
     ARRAY_TYPE              = 10
     UNKNOWN_TYPE            = 11
+    # extended h5coro types
+    VL_STRING_TYPE          = 12
+    VL_SEQUENCE_TYPE        = 13
     # numpy type conversion
     TO_NUMPY_TYPE = {
         FIXED_POINT_TYPE: {
@@ -117,7 +120,7 @@ class H5Metadata:
         if self.type == self.FIXED_POINT_TYPE or self.type == self.FLOATING_POINT_TYPE:
             datatype = self.TO_NUMPY_TYPE[self.type][self.signedval][self.typeSize]
             typestr = f'{datatype}'
-        elif self.type == self.STRING_TYPE:
+        elif self.type == self.STRING_TYPE or self.type == self.VL_STRING_TYPE:
             typestr = f'{str}'
         return f'{{\"type\": {typestr}, \"dims\": {self.dimensions}}}'
 
