@@ -28,6 +28,7 @@ class TestIcesat2:
         )
         promise = h5obj.readDatasets([ATL06_DATASET], block=True)
         assert len(promise[ATL06_DATASET]) == 3880
+        h5obj.close()
 
     def test_s3driver(self):
         h5obj = h5coro.H5Coro(
@@ -38,6 +39,7 @@ class TestIcesat2:
         )
         assert len(promise[ATL03_DATASET]) == 20622551
         assert abs(promise[ATL03_DATASET][0] - 2553.04) < 0.0001
+        h5obj.close()
 
 #    def test_s3driver_public_bucket(self):
 #        h5obj = h5coro.H5Coro(
@@ -73,6 +75,7 @@ class TestIcesat2:
         ]
         for i in range(len(expected)):
             assert abs(promise[ATL03_DATASET][100:110][i] - expected[i]) < 0.001
+        h5obj.close()
 
     def test_inspect_variable(self):
         h5obj = h5coro.H5Coro(
@@ -81,6 +84,7 @@ class TestIcesat2:
         links, attributes, metadata = h5obj.inspectPath(ATL03_DATASET, w_attr=True)
         assert metadata.dimensions[0] == 20622551
         assert attributes["units"] == "meters"
+        h5obj.close()
 
     def test_list_group(self):
         h5obj = h5coro.H5Coro(
@@ -92,6 +96,7 @@ class TestIcesat2:
         assert "data_rate" in attributes
         assert type(attributes["data_rate"]) == str
         assert variables["weight_ph"]["valid_max"][0] == 255
+        h5obj.close()
 
     def test_2d_var(self):
         h5obj = h5coro.H5Coro(ATL03_S3_OBJECT, s3driver.S3Driver, credentials=credentials)
@@ -100,3 +105,4 @@ class TestIcesat2:
         for row in range(len(expected)):
             for column in range(len(expected[row])):
                 assert promise[ATL03_2D_DATASET][row][column] == expected[row][column]
+        h5obj.close()

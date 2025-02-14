@@ -21,7 +21,7 @@ class TestAOS:
         # read dataset with h5py
         s3 = s3fs.S3FileSystem()
         fp = h5py.File(s3.open(OBJECT_URL, 'rb'), mode='r')
-            
+
         # read dataset with h5coro
         h5obj = h5coro.H5Coro(BUCKET_NAME + '/' + OBJECT_NAME, s3driver.S3Driver, errorChecking=True, verbose=True, credentials=credentials, multiProcess=False)
         promise = h5obj.readDatasets(datasets, block=True, enableAttributes=False)
@@ -34,3 +34,5 @@ class TestAOS:
                 assert value == promise[variable][i][j]
                 j += 1
             i += 1
+
+        h5obj.close()

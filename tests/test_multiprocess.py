@@ -7,7 +7,7 @@ from .test_helpers import *
 # NOTE: currently asyncronous read is not working - it hangs, git issue #35
 # @pytest.mark.parametrize("multiProcess, block", [(False, False), (False, True), (True, False), (True, True)])
 @pytest.mark.parametrize("multiProcess, block", [(False, True), (True, True)])
-class TestHDF:
+class TestMultiProcess:
     @classmethod
     def setup_class(cls):
         """Set up the class by downloading the file and reading with h5py."""

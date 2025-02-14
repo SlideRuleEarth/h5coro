@@ -16,3 +16,4 @@ class TestHDF:
         expected = [ 0.0, 0.00370616, -0.00038263, -0.00219702, 0.01771416]
         for i in range(len(expected)):
             assert abs(promise[dataset][0][i] - expected[i]) < 0.0001
+        h5obj.close()
