@@ -100,6 +100,7 @@ class H5Dataset:
     H5_TREE_SIGNATURE_LE    = 0x45455254
     H5_HEAP_SIGNATURE_LE    = 0x50414548
     H5_SNOD_SIGNATURE_LE    = 0x444F4E53
+    H5_GCOL_SIGNATURE_LE    = 0x4C4F4347
     # layouts
     COMPACT_LAYOUT          = 0
     CONTIGUOUS_LAYOUT       = 1
@@ -208,7 +209,7 @@ class H5Dataset:
         # calculate size of buffer
         buffer_size = self.meta.typeSize * self.numElements
         if buffer_size <= 0:
-            log.warn(f'empty read: typeSize={self.meta.typeSize}, numElements={self.numElements}')
+            log.warning(f'empty read: typeSize={self.meta.typeSize}, numElements={self.numElements}')
             return
 
         # allocate buffer
@@ -223,7 +224,9 @@ class H5Dataset:
         # read compact and contiguous layouts
         # ###################################
         if (self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT):
-            if self.meta.ndims == 0:
+            if self.meta.type == H5Metadata.VL_STRING_TYPE:
+                buffer = self.readVLString(self.meta.address)
+            elif self.meta.ndims == 0:
                 buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
             else:
                 compact_buffer = self.resourceObject.ioRequest(self.meta.address, buffer_size, caching=False)
@@ -282,10 +285,13 @@ class H5Dataset:
             self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
             if self.meta.ndims > 1:
                 self.values = self.values.reshape(self.shape)
-        elif self.meta.type == H5Metadata.STRING_TYPE:
-            self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
+        elif self.meta.type == H5Metadata.STRING_TYPE or self.meta.type == H5Metadata.VL_STRING_TYPE:
+            if self.meta.signedval:
+                self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
+            else:
+                self.values = ctypes.create_string_buffer(buffer).value.decode('utf-8')
         else:
-            log.warn(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
+            log.warning(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
     #######################
     # Destructor
@@ -775,7 +781,7 @@ class H5Dataset:
         # Reference
         elif meta.type == H5Metadata.COMPOUND_TYPE:
             meta.signedval = True
-            log.warn(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
+            log.warning(f'Compound datatype is not currently supported: unable to fully inspect {self.dataset}')
             self.pos = starting_position + msg_size
         # Reference
         elif meta.type == H5Metadata.REFERENCE_TYPE:
@@ -798,11 +804,11 @@ class H5Dataset:
                 log.info(f'Reference Type:       {ref_str}')
         # Variable Length
         elif meta.type == H5Metadata.VARIABLE_LENGTH_TYPE:
-            if self.resourceObject.verbose:
-                vl_type = databits & 0xF # variable length type
-                padding = (databits & 0xF0) >> 4
-                charset = (databits & 0xF00) >> 8
+            vl_type = databits & 0xF # variable length type
+            padding = (databits & 0xF0) >> 4
+            charset = (databits & 0xF00) >> 8
 
+            if self.resourceObject.verbose:
                 vl_type_str = "unknown"
                 if vl_type == 0:
                     vl_type_str = "Sequence"
@@ -827,20 +833,29 @@ class H5Dataset:
                 log.info(f'Padding Type:         {padding_str}')
                 log.info(f'Character Set:        {charset_str}')
 
-            # save off
-            vlen_type_size  = meta.typeSize
-            vlen_type       = meta.type
-            vlen_signedval  = meta.signedval
+            # save metadata
+            vlen_type_size = meta.typeSize
 
             # recursively call datatype message
             self.datatypeMsgHandler(0, obj_hdr_flags, dlvl, meta)
+
+            # restore metadata
+            meta.typeSize = vlen_type_size
+            if vl_type == 0:
+                meta.type = H5Metadata.VL_SEQUENCE_TYPE
+            elif vl_type == 1:
+                meta.type = H5Metadata.VL_STRING_TYPE
+            if charset == 0:
+                meta.signedval = True # ASCII
+            elif charset == 1:
+                meta.signedval = False # UTF-8
+
         # String
         elif meta.type == H5Metadata.STRING_TYPE:
-            meta.signedval = True
-            if self.resourceObject.verbose:
-                padding = databits & 0x0F
-                charset = (databits & 0xF0) >> 4
+            padding = databits & 0x0F
+            charset = (databits & 0xF0) >> 4
 
+            if self.resourceObject.verbose:
                 padding_str = "unknown"
                 if padding == 0:
                     padding_str = "Null Terminate"
@@ -857,6 +872,12 @@ class H5Dataset:
 
                 log.info(f'Padding Type:         {padding_str}')
                 log.info(f'Character Set:        {charset_str}')
+
+            if charset == 0:
+                meta.signedval = True # ASCII
+            elif charset == 1:
+                meta.signedval = False # UTF-8
+
         # Default
         elif self.resourceObject.errorChecking:
             raise FatalError(f'unsupported datatype {meta.type}')
@@ -1019,7 +1040,7 @@ class H5Dataset:
     def datalayoutMsgHandler(self, msg_size, obj_hdr_flags, dlvl):
         starting_position   = self.pos
         version             = self.readField(1)
-        self.meta.layout         = self.readField(1)
+        self.meta.layout    = self.readField(1)
 
         # display
         if self.resourceObject.verbose:
@@ -1773,6 +1794,62 @@ class H5Dataset:
         return self.pos - starting_position
 
     #######################
+    # readVLString
+    #######################
+    def readVLString(self, address):
+        buffer = None
+        return_position = self.pos
+
+        # read variable length record
+        self.pos = address
+        vl_length = self.readField(4)
+        global_heap_address = self.readField(self.resourceObject.offsetSize)
+        vl_index = self.readField(4)
+        if self.resourceObject.verbose:
+            log.info(f'<<Variable Length Record - {self.dataset} @0x{address:x}>>')
+            log.info(f'VL Length:            {vl_length}')
+            log.info(f'VL Index:             {vl_index}')
+
+        # read global heap header
+        self.pos = global_heap_address
+        if self.resourceObject.errorChecking:
+            signature = self.readField(4)
+            version = self.readField(1)
+            self.pos += 3 # reserved
+            if signature != self.H5_GCOL_SIGNATURE_LE:
+                raise FatalError(f'invalid global heap signature: 0x{signature:x}')
+            if version != 1:
+                raise FatalError(f'incorrect version of global heap: {version}')
+        else:
+            self.pos += 8
+        global_heap_size = self.readField(self.resourceObject.offsetSize)
+        if self.resourceObject.verbose:
+            log.info(f'<<Global Heap Collection - {self.dataset} @0x{global_heap_address:x}>>')
+            log.info(f'Global Heap Size:     {global_heap_size}')
+
+        # read entries in global heap
+        end_of_heap = self.pos + global_heap_size
+        while self.pos < end_of_heap:
+            object_index = self.readField(2)
+            self.pos += 2 # reference count
+            self.pos += 4 # reserved
+            object_length = self.readField(self.resourceObject.lengthSize)
+
+            if object_index == vl_index:
+                if object_length != vl_length:
+                    raise FatalError(f'inconsistent lengths: {vl_length} != {object_length}')
+                if self.resourceObject.verbose:
+                    log.info(f'Object Index:         {object_index}')
+                    log.info(f'Object Size:          {object_length}')
+                buffer = self.resourceObject.ioRequest(self.pos, object_length, caching=False)
+                break
+            else:
+                self.pos += object_length
+
+        self.pos = return_position
+        return buffer
+
+    #######################
     # hypersliceIntersection
     #######################
     def hypersliceIntersection(self, node_slice, node_level):
@@ -1934,7 +2011,7 @@ class H5Dataset:
                     self.pos = return_position
 
                 elif self.meta.ndims == 0:
-                    log.warn(f'Unexpected chunked read of a zero dimensional dataset')
+                    log.warning(f'Unexpected chunked read of a zero dimensional dataset')
                     pass # NOT SURE WHAT TO DO HERE, IS THIS POSSIBLE?
 
                 elif self.meta.ndims == 1:
