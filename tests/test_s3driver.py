@@ -25,3 +25,33 @@ def test_filedriver(multiProcess, block):
     compare_results(h5py_results, h5coro_results)
     h5coro_results = None   # Must be set to None to avoid shared memory leaks warnings
     h5obj.close()           # Close the session, GC may not free it in time for next run
+
+
+# @pytest.mark.parametrize("multiProcess, block", [(False, True), (True, True)])
+@pytest.mark.parametrize("multiProcess, block", [(False, True)])
+def test_git_issue_31(multiProcess, block):
+
+    # datasets = ['metadata/sliderule', 'metadata/profile', 'metadata/stats']
+    datasets = ['metadata/sliderule']
+
+    print(f"\nmultiProcess: {multiProcess}, async: {not block}, {'process' if multiProcess else 'thread'} count: {len(datasets)}")
+
+    # Add test for git issue #31, metadata variables are not being corectly read as strings
+    url = "sliderule/data/test/ATL24_20220826125316_10021606_006_01_001_01.h5"
+    credentials = {"profile":"default"}
+    h5obj = h5coro.H5Coro(url, s3driver.S3Driver, errorChecking=True, verbose=True, credentials=credentials, multiProcess=multiProcess)
+    promise = h5obj.readDatasets(datasets, block=block, metaOnly=True, enableAttributes=False)
+
+    print(promise["metadata/sliderule"])
+    print(promise["metadata/profile"])
+    print(promise["metadata/stats"])
+
+    # Extract metadata
+    sliderule_metadata = promise["metadata/sliderule"]
+    profile_metadata = promise["metadata/profile"]
+    stats_metadata = promise["metadata/stats"]
+
+    # Validate types, they must be strings
+    assert isinstance(sliderule_metadata, (str, bytes)), f"metadata/sliderule is not a string, got {type(sliderule_metadata)}"
+    assert isinstance(profile_metadata, (str, bytes)), f"metadata/profile is not a string, got {type(profile_metadata)}"
+    assert isinstance(stats_metadata, (str, bytes)), f"metadata/stats is not a string, got {type(stats_metadata)}"

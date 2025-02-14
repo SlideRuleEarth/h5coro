@@ -22,10 +22,6 @@ def test_filedriver(multiProcess, block):
     h5coro_results = {dataset: promise[dataset] for dataset in promise}
 
     # Compare results
-    try:
-        compare_results(h5py_results, h5coro_results)
-        print("Test passed!")
-    except AssertionError as e:
-        print(f"Test failed: {e}")
+    compare_results(h5py_results, h5coro_results)
 
     h5coro_results = None
