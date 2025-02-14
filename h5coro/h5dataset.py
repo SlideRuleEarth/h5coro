@@ -1835,6 +1835,7 @@ class H5Dataset:
             self.pos += 4 # reserved
             object_length = self.readField(self.resourceObject.lengthSize)
 
+            # read or skip object
             if object_index == vl_index:
                 if object_length != vl_length:
                     raise FatalError(f'inconsistent lengths: {vl_length} != {object_length}')
@@ -1845,6 +1846,10 @@ class H5Dataset:
                 break
             else:
                 self.pos += object_length
+
+            # align to next 8 byte alignment
+            alignment_padding = ((8 - (object_length % 8)) % 8) # align to 8-byte boundary
+            self.pos += alignment_padding
 
         self.pos = return_position
         return buffer
