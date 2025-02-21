@@ -74,6 +74,9 @@ def BTreeReader(dataset, buffer, level):
 
         # Read BTree
         dataset.readBTreeV1(buffer, level)
+    except Exception as e:
+        log.error(f"[{os.getpid()}] FAILED BTreeReader for dataset {dataset.dataset}: {e}")
+
     finally:
         # Close driver
         if dataset.resourceObject.driver is not None:

@@ -6,7 +6,7 @@ from .test_helpers import *
 @pytest.mark.region
 # NOTE: currently asyncronous read is not working - it hangs, git issue #35
 # @pytest.mark.parametrize("multiProcess, block", [(False, False), (False, True), (True, False), (True, True)])
-@pytest.mark.parametrize("multiProcess, block", [(False, True), (True, True)])
+@pytest.mark.parametrize("multiProcess, block", [(False, True), (False, False), (True, True)])
 class TestMultiProcess:
     @classmethod
     def setup_class(cls):
@@ -31,8 +31,8 @@ class TestMultiProcess:
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(self.local_file, filedriver.FileDriver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(get_datasets(), block=block)
-        print(f"filedriver read: {time.perf_counter() - start_time:.2f} secs")
         results = {dataset: promise[dataset] for dataset in promise}
+        print(f"filedriver read: {time.perf_counter() - start_time:.2f} secs")
         compare_results(self.h5py_results, results)
         results = None  # Must be set to None to avoid shared memory leaks warnings
         h5obj.close()   # Close the session, GC may not free it in time
@@ -41,8 +41,8 @@ class TestMultiProcess:
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(HDF_OBJECT_S3[5:], s3driver.S3Driver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(get_datasets(), block=block)
-        print(f"s3driver read:   {time.perf_counter() - start_time:.2f} secs")
         results = {dataset: promise[dataset] for dataset in promise}
+        print(f"s3driver read:   {time.perf_counter() - start_time:.2f} secs")
         compare_results(self.h5py_results, results)
         results = None  # Must be set to None to avoid shared memory leaks warnings
         h5obj.close()   # Close the session, GC may not free it in time
@@ -51,8 +51,8 @@ class TestMultiProcess:
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(self.pre_signed_url, webdriver.HTTPDriver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(get_datasets(), block=block)
-        print(f"webdriver read:  {time.perf_counter() - start_time:.2f} secs")
         results = {dataset: promise[dataset] for dataset in promise}
+        print(f"webdriver read:  {time.perf_counter() - start_time:.2f} secs")
         compare_results(self.h5py_results, results)
         results = None  # Must be set to None to avoid shared memory leaks warnings
         h5obj.close()   # Close the session, GC may not free it in time

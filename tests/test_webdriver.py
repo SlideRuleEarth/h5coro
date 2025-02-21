@@ -8,13 +8,15 @@ from .test_helpers import *
 # NOTE: currently asynchronous read is not working - it hangs, git issue #35
 # @pytest.mark.parametrize("multiProcess, block", [(False, False), (False, True), (True, False), (True, True)])
 
-@pytest.mark.parametrize("multiProcess, block", [(False, True), (True, True)])
+@pytest.mark.parametrize("multiProcess, block", [(False, False), (False, True), (True, True)])
 class TestWebDriver:
-    def test_dataset_read(self, multiProcess, block):
-        """Test file driver with multiple configurations."""
-        local_file = download_hdf_to_local()
-        h5py_results = read_with_h5py(local_file)
+    @classmethod
+    def setup_class(cls):
+        """Set up the class by downloading the file and reading with h5py."""
+        cls.local_file = download_hdf_to_local()
+        cls.h5py_results = read_with_h5py(cls.local_file)
 
+    def test_dataset_read(self, multiProcess, block):
         s3 = boto3.client("s3", region_name="us-west-2")
         pre_signed_url = s3.generate_presigned_url(
             "get_object",
@@ -33,6 +35,6 @@ class TestWebDriver:
         h5coro_results = {dataset: promise[dataset] for dataset in promise}
 
         # Compare results
-        compare_results(h5py_results, h5coro_results)
+        compare_results(self.h5py_results, h5coro_results)
         h5coro_results = None   # Must be set to None to avoid shared memory leaks warnings
         h5obj.close()           # Close the session, GC may not free it in time for next run
