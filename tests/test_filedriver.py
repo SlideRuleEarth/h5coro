@@ -15,7 +15,7 @@ class TestFileDriver:
 
     def test_dataset_read(self, multiProcess, block):
         # Read with h5coro file driver
-        print(f"\nmultiProcess: {multiProcess}, async: {not block}, hiperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
+        print(f"\nmultiProcess: {multiProcess}, async: {not block}, hyperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(self.local_file, filedriver.FileDriver, verbose=True, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(get_datasets(), block=block)

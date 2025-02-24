@@ -79,12 +79,13 @@ class HTTPDriver:
     def read(self, pos, size):
         headers = {"Range": f"bytes={pos}-{pos+size-1}"}
 
-        retries = 2
-        delay = 1  # 1-second delay between retries
+        use_streaming = size > 8192   # Enable streaming for reads over 8KB
+        timeout = 30                  # Don't let it block for more than 30 seconds
 
         try:
             # Perform the HTTP GET request with range headers
-            stream = self.session.get(self.resource, headers=headers, allow_redirects=True)
+            stream = self.session.get(self.resource, headers=headers, allow_redirects=True,
+                                      timeout=timeout, stream=use_streaming)
 
             # Success case: return content if status is 200 or 206 (Partial Content)
             if stream.status_code in [200, 206]:

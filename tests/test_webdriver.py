@@ -25,7 +25,7 @@ class TestWebDriver:
         )
 
         # Read with h5coro file driver
-        print(f"\nmultiProcess: {multiProcess}, async: {not block}, hiperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
+        print(f"\nmultiProcess: {multiProcess}, async: {not block}, hyperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
         start_time = time.perf_counter()
         h5obj = h5coro.H5Coro(pre_signed_url, webdriver.HTTPDriver, errorChecking=True, multiProcess=multiProcess)
         promise = h5obj.readDatasets(get_datasets(), block=block)

@@ -25,7 +25,7 @@ class TestMultiProcess:
     def test_dataset_read(self, multiProcess, block):
         """Reads datasets from S3 and local file with multiProcess enabled/disabled, then compares the results."""
 
-        print(f"\nmultiProcess:    {multiProcess}, async: {not block}, hiperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
+        print(f"\nmultiProcess:    {multiProcess}, async: {not block}, hyperslice_len: {get_hyperslice_range()}, {'process' if multiProcess else 'thread'} count: {len(DATASET_PATHS)}")
 
         # Step 1: Read from the local file
         start_time = time.perf_counter()
