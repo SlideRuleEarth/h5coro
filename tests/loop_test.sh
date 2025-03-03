@@ -85,7 +85,7 @@ wait_for_test_exit() {
 while [ $loop_count -eq -1 ] || [ $run_count -lt $loop_count ]; do
     run_count=$((run_count + 1))
     echo "==========================="
-    echo "Test Run #$run_count"
+    echo "Test Run #$run_count" of "$loop_count"
     echo "==========================="
 
     # Run the test

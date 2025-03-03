@@ -47,93 +47,92 @@ DATASET_PATHS = [
     "/gt1r/heights/ph_id_count",
     "/gt1r/heights/ph_id_pulse",
     "/gt1r/heights/quality_ph",
-    "/gt1r/heights/signal_conf_ph",
-    "/gt1r/geolocation/pitch",
-    "/gt1r/geolocation/podppd_flag",
-    "/gt1r/geolocation/segment_dist_x",
-    "/gt1r/geolocation/segment_id",
-    "/gt1r/geolocation/solar_azimuth",
-    "/gt1r/geolocation/solar_elevation",
-    "/gt1r/geolocation/surf_type",
 
-    "/gt2l/heights/delta_time",
-    "/gt2l/heights/dist_ph_across",
-    "/gt2l/heights/dist_ph_along",
-    "/gt2l/heights/h_ph",
-    "/gt2l/heights/lat_ph",
-    "/gt2l/heights/lon_ph",
-    "/gt2l/heights/pce_mframe_cnt",
-    "/gt2l/heights/ph_id_channel",
-    "/gt2l/heights/ph_id_count",
-    "/gt2l/heights/ph_id_pulse",
-    "/gt2l/heights/quality_ph",
-    "/gt2l/heights/signal_conf_ph",
+    # To this line we have 30 sets
+
+    # "/gt1r/heights/signal_conf_ph",
+    # "/gt1r/geolocation/pitch",
+    # "/gt1r/geolocation/podppd_flag",
+    # "/gt1r/geolocation/segment_dist_x",
+    # "/gt1r/geolocation/segment_id",
+    # "/gt1r/geolocation/solar_azimuth",
+    # "/gt1r/geolocation/solar_elevation",
+    # "/gt1r/geolocation/surf_type",
+
+    # "/gt2l/heights/delta_time",
+    # "/gt2l/heights/dist_ph_across",
+    # "/gt2l/heights/dist_ph_along",
+    # "/gt2l/heights/h_ph",
+    # "/gt2l/heights/lat_ph",
+    # "/gt2l/heights/lon_ph",
+    # "/gt2l/heights/pce_mframe_cnt",
+    # "/gt2l/heights/ph_id_channel",
+    # "/gt2l/heights/ph_id_count",
+    # "/gt2l/heights/ph_id_pulse",
+    # "/gt2l/heights/quality_ph",
+    # "/gt2l/heights/signal_conf_ph",
 
     # To this line we have 50 sets
 
-    "/gt2l/geolocation/pitch",
-    "/gt2l/geolocation/podppd_flag",
-    "/gt2l/geolocation/segment_dist_x",
-    "/gt2l/geolocation/segment_id",
-    "/gt2l/geolocation/solar_azimuth",
-    "/gt2l/geolocation/solar_elevation",
-    "/gt2l/geolocation/surf_type",
+    # "/gt2l/geolocation/pitch",
+    # "/gt2l/geolocation/podppd_flag",
+    # "/gt2l/geolocation/segment_dist_x",
+    # "/gt2l/geolocation/segment_id",
+    # "/gt2l/geolocation/solar_azimuth",
+    # "/gt2l/geolocation/solar_elevation",
+    # "/gt2l/geolocation/surf_type",
 
-    "/gt2r/heights/delta_time",
-    "/gt2r/heights/dist_ph_across",
-    "/gt2r/heights/dist_ph_along",
-    "/gt2r/heights/h_ph",
-    "/gt2r/heights/lat_ph",
-    "/gt2r/heights/lon_ph",
-    "/gt2r/heights/pce_mframe_cnt",
-    "/gt2r/heights/ph_id_channel",
-    "/gt2r/heights/ph_id_count",
-    "/gt2r/heights/ph_id_pulse",
-    "/gt2r/heights/quality_ph",
-    "/gt2r/heights/signal_conf_ph",
-    "/gt2r/geolocation/pitch",
-    "/gt2r/geolocation/podppd_flag",
-    "/gt2r/geolocation/segment_dist_x",
-    "/gt2r/geolocation/segment_id",
-    "/gt2r/geolocation/solar_azimuth",
-    "/gt2r/geolocation/solar_elevation",
-    "/gt2r/geolocation/surf_type",
+    # "/gt2r/heights/delta_time",
+    # "/gt2r/heights/dist_ph_across",
+    # "/gt2r/heights/dist_ph_along",
+    # "/gt2r/heights/h_ph",
+    # "/gt2r/heights/lat_ph",
+    # "/gt2r/heights/lon_ph",
+    # "/gt2r/heights/pce_mframe_cnt",
+    # "/gt2r/heights/ph_id_channel",
+    # "/gt2r/heights/ph_id_count",
+    # "/gt2r/heights/ph_id_pulse",
+    # "/gt2r/heights/quality_ph",
+    # "/gt2r/heights/signal_conf_ph",
+    # "/gt2r/geolocation/pitch",
+    # "/gt2r/geolocation/podppd_flag",
+    # "/gt2r/geolocation/segment_dist_x",
+    # "/gt2r/geolocation/segment_id",
+    # "/gt2r/geolocation/solar_azimuth",
+    # "/gt2r/geolocation/solar_elevation",
+    # "/gt2r/geolocation/surf_type",
 
-    "/gt3l/heights/delta_time",
-    "/gt3l/heights/dist_ph_across",
-    "/gt3l/heights/dist_ph_along",
-    "/gt3l/heights/h_ph",
-    "/gt3l/heights/lat_ph",
-    "/gt3l/heights/lon_ph",
-    "/gt3l/heights/pce_mframe_cnt",
-    "/gt3l/heights/ph_id_channel",
-    "/gt3l/heights/ph_id_count",
-    "/gt3l/heights/ph_id_pulse",
-    "/gt3l/heights/quality_ph",
-    "/gt3l/heights/signal_conf_ph",
-    "/gt3l/geolocation/pitch",
-    "/gt3l/geolocation/podppd_flag",
-    "/gt3l/geolocation/segment_dist_x",
-    "/gt3l/geolocation/segment_id",
-    "/gt3l/geolocation/solar_azimuth",
-    "/gt3l/geolocation/solar_elevation",
-    "/gt3l/geolocation/surf_type",
+    # "/gt3l/heights/delta_time",
+    # "/gt3l/heights/dist_ph_across",
+    # "/gt3l/heights/dist_ph_along",
+    # "/gt3l/heights/h_ph",
+    # "/gt3l/heights/lat_ph",
+    # "/gt3l/heights/lon_ph",
+    # "/gt3l/heights/pce_mframe_cnt",
+    # "/gt3l/heights/ph_id_channel",
+    # "/gt3l/heights/ph_id_count",
+    # "/gt3l/heights/ph_id_pulse",
+    # "/gt3l/heights/quality_ph",
+    # "/gt3l/heights/signal_conf_ph",
+    # "/gt3l/geolocation/pitch",
+    # "/gt3l/geolocation/podppd_flag",
+    # "/gt3l/geolocation/segment_dist_x",
+    # "/gt3l/geolocation/segment_id",
+    # "/gt3l/geolocation/solar_azimuth",
+    # "/gt3l/geolocation/solar_elevation",
+    # "/gt3l/geolocation/surf_type",
 
-    "/gt3r/heights/delta_time",
-    "/gt3r/heights/dist_ph_across",
-    "/gt3r/heights/dist_ph_along",
-    "/gt3r/heights/h_ph",
-    "/gt3r/heights/lat_ph",
+    # "/gt3r/heights/delta_time",
+    # "/gt3r/heights/dist_ph_across",
+    # "/gt3r/heights/dist_ph_along",
+    # "/gt3r/heights/h_ph",
+    # "/gt3r/heights/lat_ph",
 
     # To this line we have 100 sets
 ]
 
-
-HYPERSLICES = [[110, 610]]
-HYPERSLICES_2D = [[110, 610], [0, 2]]
-
-# HYPERSLICES = [[0,  70000]]
-# HYPERSLICES_2D = [[0, 70000], [0, 2]]
+HYPERSLICES = [[110, 1110]]
+HYPERSLICES_2D = [[110, 1110], [0, 5]]
 
 # Specify the datasets that require a 2D hyperslice
 DATASETS_REQUIRING_2D = {
@@ -152,14 +151,24 @@ DATASETS_REQUIRING_2D = {
 }
 
 # Get the list of datasets
-def get_datasets():
+def get_datasets(use_hyperslice):
     """Prepare and return the list of datasets with appropriate hyperslices."""
+    if use_hyperslice:
+        return [
+            {'dataset': path, 'hyperslice': HYPERSLICES_2D if path in DATASETS_REQUIRING_2D else HYPERSLICES}
+            for path in DATASET_PATHS
+        ]
+
+    # No hyperslices, return all elements in each dataset
     return [
-        {'dataset': path, 'hyperslice': HYPERSLICES_2D if path in DATASETS_REQUIRING_2D else HYPERSLICES}
+        {'dataset': path, 'hyperslice': None}
         for path in DATASET_PATHS
     ]
 
-def get_hyperslice_range():
+def get_hyperslice_range(use_hyperslice):
+    if not use_hyperslice:
+        return "all"
+
     start, end = HYPERSLICES[0]
     return end - start
 
@@ -194,20 +203,23 @@ def download_hdf_to_local():
 
     return HDF_OBJECT_LOCAL
 
-def read_with_h5py(file_path):
+def read_with_h5py(file_path, use_hyperslice):
     """Read datasets using h5py."""
     results = {}
     with h5py.File(file_path, 'r') as hdf_file:
         for dataset_path in DATASET_PATHS:
             if dataset_path in hdf_file:
                 dataset = hdf_file[dataset_path]
-                if dataset.ndim == 1:
-                    results[dataset_path] = dataset[HYPERSLICES[0][0]:HYPERSLICES[0][1]]
-                elif dataset.ndim == 2:
-                    results[dataset_path] = dataset[
-                        HYPERSLICES_2D[0][0]:HYPERSLICES_2D[0][1],
-                        HYPERSLICES_2D[1][0]:HYPERSLICES_2D[1][1]
-                    ]
+                if use_hyperslice:
+                    if dataset.ndim == 1:
+                        results[dataset_path] = dataset[HYPERSLICES[0][0]:HYPERSLICES[0][1]]
+                    elif dataset.ndim == 2:
+                        results[dataset_path] = dataset[
+                            HYPERSLICES_2D[0][0]:HYPERSLICES_2D[0][1],
+                            HYPERSLICES_2D[1][0]:HYPERSLICES_2D[1][1]
+                        ]
+                else:
+                    results[dataset_path] = dataset[:]  # Read entire dataset
     return results
 
 def compare_results(h5py_results, h5coro_results):

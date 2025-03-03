@@ -136,7 +136,7 @@ class H5Dataset:
         self.numElements            = 1 # recalculated below
         self.shape                  = [] # recalculated below
         self.dataset                = dataset
-        self.hyperslice             = hyperslice
+        self.hyperslice             = hyperslice if hyperslice is not None else []
         self.datasetPath            = list(filter(('').__ne__, self.dataset.split('/')))
         self.datasetPathLevels      = len(self.datasetPath)
         self.datasetFound           = False
