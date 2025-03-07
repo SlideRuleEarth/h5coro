@@ -71,8 +71,10 @@ class S3Driver:
             session = boto3.Session()
             session.events.register("choose-signer.s3.*", disable_signing)
             return session
-
-        if "profile" in credentials:
+        elif "role" in credentials and credentials["role"]:
+            session = boto3.Session()
+            return session
+        elif "profile" in credentials:
             return boto3.Session(profile_name=credentials["profile"])
         elif (
             "aws_access_key_id" in credentials

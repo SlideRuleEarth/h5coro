@@ -101,7 +101,8 @@ class H5Coro:
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
         verbose = VERBOSE_DEFAULT,
-        multiProcess = False
+        multiProcess = False,
+        throwOnError = False
     ):
         self.resource = resource
         self.driver = driverClass(resource, credentials)
@@ -109,6 +110,7 @@ class H5Coro:
         self.errorChecking = errorChecking
         self.verbose = verbose
         self.multiProcess = multiProcess
+        self.throwOnError = throwOnError
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
