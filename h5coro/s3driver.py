@@ -28,46 +28,23 @@ class FatalError(RuntimeError):
 
 
 class S3Driver:
-    _shared_session = None  # Class-level shared session
     _global_max_connections = 100  # Ensure enough sockets for high concurrency
-
-    @classmethod
-    def get_shared_session(cls, credentials):
-        """ Returns a shared session with authentication handling. """
-        if cls._shared_session is None:
-            if "annon" in credentials and credentials["annon"]:
-                session = boto3.Session()
-                session.events.register("choose-signer.s3.*", disable_signing)
-            elif "profile" in credentials:
-                session = boto3.Session(profile_name=credentials["profile"])
-            elif (
-                "aws_access_key_id" in credentials
-                and "aws_secret_access_key" in credentials
-            ):
-                session = boto3.Session(
-                    aws_access_key_id=credentials["aws_access_key_id"],
-                    aws_secret_access_key=credentials["aws_secret_access_key"],
-                    aws_session_token=credentials.get("aws_session_token"),
-                )
-            else:
-                session = boto3.Session()  # Default session
-
-            cls._shared_session = session
-
-        return cls._shared_session
 
     #######################
     # Constructor
     #######################
-    def __init__(self, resource, credentials, max_connections=None):
+    def __init__(self, resource, credentials, session=None, max_connections=None):
         self.cached_credentials = credentials
         self.resourcePath = list(filter(("").__ne__, resource.split("/")))
 
         # If max_connections is set, use it. Otherwise, inherit the latest known global max_connections.
         self.max_connections = max_connections if max_connections is not None else S3Driver._global_max_connections
 
-        # Ensure one shared session
-        self.session = self.get_shared_session(self.cached_credentials)
+        # Only copy constructor should pass in an existing session.
+        if session is not None:
+            self.session = session
+        else:
+            self.session = self.create_session(self.cached_credentials)
 
         # Thread-safe client: one per instance, reused across all threads
         self.client = self.session.client(
@@ -86,6 +63,46 @@ class S3Driver:
         self.bucket_name = self.resourcePath[0]
         self.key = "/".join(self.resourcePath[1:])
         self._closed = False
+
+    #######################
+    # create_session
+    #######################
+    def create_session(self, credentials):
+        """ Returns a shared session with authentication handling. """
+        if "annon" in credentials and credentials["annon"]:
+            session = boto3.Session()
+            session.events.register("choose-signer.s3.*", disable_signing)
+        elif "role" in credentials and credentials["role"]:
+            session = boto3.Session()
+        elif "profile" in credentials:
+            session = boto3.Session(profile_name=credentials["profile"])
+        elif (
+            "aws_access_key_id" in credentials
+            and "aws_secret_access_key" in credentials
+            and "aws_session_token" in credentials
+        ):
+            session = boto3.Session(
+                aws_access_key_id=credentials["aws_access_key_id"],
+                aws_secret_access_key=credentials["aws_secret_access_key"],
+                aws_session_token=credentials["aws_session_token"],
+            )
+        elif (
+            "accessKeyId" in credentials
+            and "secretAccessKey" in credentials
+            and "sessionToken" in credentials
+        ):
+            session = boto3.Session(
+                aws_access_key_id=credentials["accessKeyId"],
+                aws_secret_access_key=credentials["secretAccessKey"],
+                aws_session_token=credentials["sessionToken"],
+            )
+        elif len(credentials) == 0:
+            session = boto3.Session()
+        else:
+            raise FatalError(
+                "invalid credential keys provided, looking for: aws_access_key_id, aws_secret_access_key, and aws_session_token"
+            )
+        return session
 
     #######################
     # read
@@ -114,8 +131,7 @@ class S3Driver:
     #######################
     def copy(self, max_connections=None):
         """Creates a new independent S3Driver instance with a specified max_connections."""
-        return S3Driver("/".join(self.resourcePath), self.cached_credentials,
-                        max_connections if max_connections is not None else S3Driver._global_max_connections)
+        return S3Driver("/".join(self.resourcePath), self.cached_credentials, self.session, max_connections)
 
     #######################
     # Close resources
