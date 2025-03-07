@@ -101,7 +101,8 @@ class H5Coro:
         cacheLineSize = CACHE_LINE_SIZE_DEFAULT,
         errorChecking = ERROR_CHECKING_DEFAULT,
         verbose = VERBOSE_DEFAULT,
-        multiProcess = False
+        multiProcess = False,
+        maxProcesses = None
     ):
         self.resource = resource
         self.driver = driverClass(resource, credentials)
@@ -109,6 +110,7 @@ class H5Coro:
         self.errorChecking = errorChecking
         self.verbose = verbose
         self.multiProcess = multiProcess
+        self.maxProcesses = maxProcesses if maxProcesses is not None else os.cpu_count() * 10
 
         self.cacheLineSize = cacheLineSize
         self.cacheLineMask = (0xFFFFFFFFFFFFFFFF - (cacheLineSize-1))
@@ -126,6 +128,12 @@ class H5Coro:
 
         # Register automatic cleanup when the object is deleted
         weakref.finalize(self, self._cleanup, self.driver, self.cache, self.cache_locks, log)
+
+        # Limit for concurrent processes in multi-process mode
+        if self.multiProcess:
+            self.processSemaphore = threading.Semaphore(self.maxProcesses)
+        else:
+            self.processSemaphore = None
 
     #######################
     # setDummyLocks

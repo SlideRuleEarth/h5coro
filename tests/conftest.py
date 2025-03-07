@@ -1,4 +1,5 @@
 import pytest
+import gc, time, multiprocessing
 
 def pytest_addoption(parser):
     parser.addoption("--daac", action="store", default="NSIDC")
@@ -14,9 +15,7 @@ def daac(request):
 
 # These tests use main and are not compatible with pytest
 IGNORED_FILES = [
-    "filedriver_test.py",
-    "webdriver_test.py",
-    "s3driver_test.py"
+    "test_multiprocess.py", # This test combines all 3 drivers and is redundant with other tests (useful for comparing driver's performance)
 ]
 
 def pytest_ignore_collect(path):

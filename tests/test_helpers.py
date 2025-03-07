@@ -35,8 +35,10 @@ DATASET_PATHS = [
     "/gt1l/geolocation/solar_azimuth",
     "/gt1l/geolocation/solar_elevation",
     "/gt1l/geolocation/surf_type",
-
     "/gt1r/heights/delta_time",
+
+    # To this line we have 20 sets
+
     "/gt1r/heights/dist_ph_across",
     "/gt1r/heights/dist_ph_along",
     "/gt1r/heights/h_ph",
@@ -58,7 +60,6 @@ DATASET_PATHS = [
     # "/gt1r/geolocation/solar_azimuth",
     # "/gt1r/geolocation/solar_elevation",
     # "/gt1r/geolocation/surf_type",
-
     # "/gt2l/heights/delta_time",
     # "/gt2l/heights/dist_ph_across",
     # "/gt2l/heights/dist_ph_along",
@@ -81,7 +82,6 @@ DATASET_PATHS = [
     # "/gt2l/geolocation/solar_azimuth",
     # "/gt2l/geolocation/solar_elevation",
     # "/gt2l/geolocation/surf_type",
-
     # "/gt2r/heights/delta_time",
     # "/gt2r/heights/dist_ph_across",
     # "/gt2r/heights/dist_ph_along",
@@ -101,7 +101,6 @@ DATASET_PATHS = [
     # "/gt2r/geolocation/solar_azimuth",
     # "/gt2r/geolocation/solar_elevation",
     # "/gt2r/geolocation/surf_type",
-
     # "/gt3l/heights/delta_time",
     # "/gt3l/heights/dist_ph_across",
     # "/gt3l/heights/dist_ph_along",
@@ -121,7 +120,6 @@ DATASET_PATHS = [
     # "/gt3l/geolocation/solar_azimuth",
     # "/gt3l/geolocation/solar_elevation",
     # "/gt3l/geolocation/surf_type",
-
     # "/gt3r/heights/delta_time",
     # "/gt3r/heights/dist_ph_across",
     # "/gt3r/heights/dist_ph_along",
@@ -133,6 +131,9 @@ DATASET_PATHS = [
 
 HYPERSLICES = [[110, 1110]]
 HYPERSLICES_2D = [[110, 1110], [0, 5]]
+
+# HYPERSLICES = [[0, 70000]]
+# HYPERSLICES_2D = [[0, 70000], [0, 5]]
 
 # Specify the datasets that require a 2D hyperslice
 DATASETS_REQUIRING_2D = {

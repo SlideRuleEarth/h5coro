@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Check if the required parameters are provided
-if [ $# -lt 1 ]; then
+if [ $# -lt 2 ]; then
     echo "Usage: $0 <test_file> [loop_count]"
     exit 1
 fi
@@ -27,32 +27,21 @@ is_pytest_file() {
     fi
 }
 
-# Function to recursively kill a process and its child processes
-kill_process_tree() {
-    local parent_pid=$1
-    local children=$(pgrep -P "$parent_pid")
-
-    # Kill child processes first
-    for child in $children; do
-        kill_process_tree "$child"
-    done
-
-    # Kill the parent process
-    echo "Killing process $parent_pid"
-    kill -9 "$parent_pid"
-}
-
 # Function to handle Ctrl+C (SIGINT)
-cleanup() {
-    echo "Ctrl+C detected! Stopping tests and killing all related processes..."
-
+_cleanup() {
     # Kill all pytest processes
     pkill -9 -f "pytest"
 
     # Also, make sure all Python test processes are terminated
     pkill -9 -f "python .*${test_file}"
 
-    echo "All test processes have been killed."
+    # Kill all Python processes related to multiprocessing
+    pkill -9 -f "python .*multiprocessing"
+}
+
+cleanup() {
+    echo "Ctrl+C detected! Stopping tests and killing all related processes..."
+    _cleanup
     exit 1
 }
 
@@ -72,7 +61,7 @@ wait_for_test_exit() {
     while pgrep -f "$process_name" > /dev/null; do
         if [ $wait_time -ge 10 ]; then
             echo "Test processes still running after 10 seconds. Killing them..."
-            cleanup  # Use the cleanup function to kill lingering processes
+            _cleanup  # Use the cleanup function to kill lingering processes
             break
         fi
         echo "Test processes still running... waiting ($wait_time seconds)"
@@ -111,6 +100,7 @@ while [ $loop_count -eq -1 ] || [ $run_count -lt $loop_count ]; do
 
     # Check and wait for any lingering test processes to exit
     wait_for_test_exit
+
 done
 
 echo "All $run_count test runs completed successfully."

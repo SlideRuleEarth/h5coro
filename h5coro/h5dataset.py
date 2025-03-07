@@ -35,6 +35,7 @@ import struct
 import zlib
 import ctypes
 import numpy
+import os
 
 ###############################################################################
 # CONSTANTS
@@ -67,20 +68,23 @@ class FatalError(RuntimeError):
 
 def BTreeReader(dataset, buffer, level):
     """Function executed in a forked process to read BTree."""
+    driver = None
     try:
         # Set dummy locks and create a new driver
         dataset.resourceObject.setDummyLocks()
-        dataset.resourceObject.driver = dataset.resourceObject.driver.copy(max_connections=1)
+        driver = dataset.resourceObject.driver.copy(max_connections=5)
+        dataset.resourceObject.driver = driver
 
         # Read BTree
         dataset.readBTreeV1(buffer, level)
+
     except Exception as e:
         log.error(f"[{os.getpid()}] FAILED BTreeReader for dataset {dataset.dataset}: {e}")
-
     finally:
         # Close driver
-        if dataset.resourceObject.driver is not None:
-            dataset.resourceObject.driver.close()
+        if driver is not None:
+            driver.close()
+
 
 ###############################################################################
 # H5DATASET CLASS
@@ -151,7 +155,7 @@ class H5Dataset:
             return
 
         # initialize local variables
-        dataset_level = 0
+        datasetLevel = 0
 
         # get metadata for dataset
         if self.dataset in self.resourceObject.metadataTable:
@@ -159,7 +163,7 @@ class H5Dataset:
         # metadata not available
         if self.meta.typeSize == 0 or not earlyExit:
             # traverse file for dataset
-            self.readObjHdr(dataset_level)
+            self.readObjHdr(datasetLevel)
             # update metadata table
             if self.meta.typeSize != 0:
                 self.resourceObject.metadataTable[self.dataset] = self.meta
@@ -272,11 +276,22 @@ class H5Dataset:
             # read b-tree
             self.pos = self.meta.address
             if self.resourceObject.multiProcess:
-                reader = Process(target=BTreeReader, args=(self, buffer, dataset_level))
-                reader.start()
-                reader.join()
+                self.resourceObject.processSemaphore.acquire()
+                reader = None
+                try:
+                    reader = Process(target=BTreeReader, args=(self, buffer, datasetLevel))
+                    if reader is None:
+                        log.error("Process call failed.")
+                    reader.start()
+                    if reader.pid is None:
+                        log.error("Process failed to start.")
+                    reader.join()
+                except Exception as e:
+                    log.error(f"Error in forked process while reading BTree: {e}")
+
+                self.resourceObject.processSemaphore.release()
             else:
-                self.readBTreeV1(buffer, dataset_level)
+                self.readBTreeV1(buffer, datasetLevel)
 
         elif self.resourceObject.errorChecking:
             raise FatalError(f'invalid data layout: {self.meta.layout}')
