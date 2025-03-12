@@ -152,19 +152,17 @@ DATASETS_REQUIRING_2D = {
 }
 
 # Get the list of datasets
-def get_datasets(use_hyperslice):
+def get_datasets(use_hyperslice, datasets_cnt=None):
     """Prepare and return the list of datasets with appropriate hyperslices."""
-    if use_hyperslice:
-        return [
-            {'dataset': path, 'hyperslice': HYPERSLICES_2D if path in DATASETS_REQUIRING_2D else HYPERSLICES}
-            for path in DATASET_PATHS
-        ]
-
-    # No hyperslices, return all elements in each dataset
-    return [
+    dataset_list = [
+        {'dataset': path, 'hyperslice': HYPERSLICES_2D if path in DATASETS_REQUIRING_2D else HYPERSLICES}
+        for path in DATASET_PATHS
+    ] if use_hyperslice else [
         {'dataset': path, 'hyperslice': None}
         for path in DATASET_PATHS
     ]
+
+    return dataset_list[:datasets_cnt] if datasets_cnt is not None else dataset_list
 
 def get_hyperslice_range(use_hyperslice):
     if not use_hyperslice:
