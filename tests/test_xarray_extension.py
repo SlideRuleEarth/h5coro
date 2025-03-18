@@ -36,6 +36,23 @@ class TestXArrayExtension:
             assert self.h5coro_results[dataset].shape == xarray_results[dataset_var_name].shape, f"Shape mismatch for {dataset}"
             assert np.allclose(self.h5coro_results[dataset], xarray_results[dataset_var_name], atol=1e-6), f"Data mismatch in {dataset}"
 
+    def get_dataset_source(self, src):
+        # Resolve local file reference at runtime
+        if src == "local_file":
+            src = "file://" + self.local_file
+        elif src == "s3_object":
+            src = HDF_OBJECT_S3[5:]
+        elif src == "http_object":
+            s3 = boto3.client("s3", region_name="us-west-2")
+            src = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": "sliderule", "Key": "data/test/ATL03_20200401184200_00950707_005_01.h5"},
+                ExpiresIn=3600 # 1 hour
+            )
+
+        return src
+
+
     # Define a parameterized test for different dataset sources
     @pytest.mark.parametrize("dataset_source", [
         pytest.param("local_file",  id="Local File"),
@@ -44,25 +61,15 @@ class TestXArrayExtension:
     ])
 
     def test_open_dataset(self, dataset_source):
-
-        # Resolve local file reference at runtime
-        if dataset_source == "local_file":
-            dataset_source = "file://" + self.local_file
-        elif dataset_source == "s3_object":
-            dataset_source = HDF_OBJECT_S3[5:]
-        elif dataset_source == "http_object":
-            s3 = boto3.client("s3", region_name="us-west-2")
-            dataset_source = s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": "sliderule", "Key": "data/test/ATL03_20200401184200_00950707_005_01.h5"},
-                ExpiresIn=3600 # 1 hour
-            )
+        src = self.get_dataset_source(dataset_source)
 
         # Open dataset using xarray with h5coro backend
-        ds_xarray = xr.open_dataset(dataset_source,
-                                     engine="h5coro",
-                                     group=self.group,
-                                     pick_variables=self.pick_variables)
+        ds_xarray = xr.open_dataset(src,
+                                    engine="h5coro",
+                                    group=self.group,
+                                    pick_variables=self.pick_variables)
+
+        print(ds_xarray)
 
         # Use only the variable name inside the selected group
         xarray_results = {entry["dataset"].split("/")[-1]: ds_xarray[entry["dataset"].split("/")[-1]].values for entry in self.datasets}
