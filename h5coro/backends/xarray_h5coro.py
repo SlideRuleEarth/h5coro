@@ -1,6 +1,7 @@
-from h5coro import h5coro, s3driver, filedriver, webdriver, logger
+from h5coro import h5coro, h5promise, s3driver, filedriver, webdriver, logger
 from h5coro.h5view import H5View
 from h5coro.h5promise import massagePath
+from h5coro.lazyh5dataset import LazyH5Dataset, LazyBackendArray
 import xarray as xr
 from xarray.backends import BackendEntrypoint
 from xarray.core.dataset import Dataset
@@ -93,20 +94,18 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 if var_to_drop in variables:
                     variables.pop(var_to_drop)
 
-        # submit data request for variables and attributes
+        # submit meta data request (blocking)
         var_paths = [os.path.join(group, name) for name in variables.keys()]
-        promise = h5obj.readDatasets(var_paths, block=True)
+        promise = h5obj.readDatasets(var_paths, block=True, metaOnly=True)
 
         # create view and move it to the lowest branch node in the tree
         view = H5View(promise)
         for step in group.split('/'):
                 view = view[step]
 
-        # format the data variables (and coordinate variables)
-        data_vars = {}
+        # get variable coordinates
         coord_names = set()
         for var in view.keys():
-            # get variable coordinates
             try:
                 # check for coordinate variables
                 var_coords = re.split(';|,| |\n', variables[var]['coordinates'])
@@ -117,23 +116,45 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             except KeyError:
                 # if no coordinates were listed for that variable then set it's coordinate as itself
                 var_coords = [var]
-            # set variable data
-            if var in col_convs:
-                data = col_convs[var](view[var])
-            else:
-                data = view[var]
-            # get dimensionality of data
-            data_dims = len(data.shape)
-            # set dimension names
-            if var in col_coords:
-                dim_names = col_coords[var]
+
+        # create xarray dataset
+        data_vars = {}
+        lazy_datasets = {}
+        for ds_name in promise.datasets:
+            meta = promise.getDataset(ds_name).meta  # Contains metadata (shape, dtype, etc.)
+
+            # Get metadata attributes
+            dtype = meta.getNumpyType()
+            shape = meta.getShape()
+
+            # create a lazy dataset wrapper that will trigger async read when accessed
+            lazy_ds = LazyH5Dataset(ds_name, shape, dtype)
+            lazy_datasets[ds_name] = lazy_ds
+
+            # determine dimension names
+            data_dims = len(shape)
+            if ds_name in col_coords:
+                dim_names = col_coords[ds_name]
             elif data_dims == 1:
                 dim_names = var_coords[0]
             else:
-                # unable to set multidimensional coordinates automatically
-                dim_names = [f'{var}_{n}' for n in range(data_dims)]
-            # add to data variables (if a coordinate, will later be moved to coordinates)
-            data_vars[var] = (dim_names, data)
+                dim_names = [f"{ds_name}_{i}" for i in range(len(shape))]
+
+            # extract just the variable name (remove group path)
+            short_var_name = ds_name.split("/")[-1]
+
+            # store the variable in xarray.Dataset with the short name
+            data_vars[short_var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds).to_xarray_lazy()))
+
+        # meta data promise is no longer needed
+        promise = None
+
+        # trigger full data read (non-blocking)
+        promise = h5obj.readDatasets(var_paths, block=False, metaOnly=False)
+
+        # assign promise to LazyH5Dataset for deferred reading
+        for ds_name in promise.datasets:
+            lazy_datasets[ds_name].set_promise(promise)
 
         # seperate out the coordinate variables from the data variables
         coords = {}
