@@ -172,7 +172,7 @@ class H5Dataset:
         if self.metaOnly:
             return
 
-        # sanity check data attrbutes
+        # sanity check data attributes
         if self.meta.typeSize <= 0:
             raise FatalError(f'missing data type information for {self.dataset}')
         elif self.meta.ndims == None:

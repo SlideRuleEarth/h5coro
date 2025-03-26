@@ -7,6 +7,7 @@ from xarray.backends import BackendEntrypoint
 from xarray.core.dataset import Dataset
 import os
 import re
+import copy
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
     '''
@@ -25,7 +26,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         col_convs={},
         col_coords={},
         pick_variables=None,
-        drop_variables=None
+        drop_variables=None,
+        hyperslices=[]
     ) -> Dataset:
         '''
         Constructor for the H5CoroBackendEntrypoint class which extends the BackendEntrypoint class from xarray.
@@ -57,6 +59,10 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                         list of variables to exclusively include in the final xarray
         drop_variables: list
                         list of variables not to include in the final xarray
+        hyperslices:    list
+                        A list of lists specifying the range of data to extract for each dimension.
+                        Each variable in the group will have the corresponding slices applied to its dimensions.
+                        [[start_dim0, end_dim0], [start_dim1, end_dim1], ...]
         '''
         # sanitize input parameters
         group = massagePath(group)
@@ -94,18 +100,10 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 if var_to_drop in variables:
                     variables.pop(var_to_drop)
 
-        # submit meta data request (blocking)
-        var_paths = [os.path.join(group, name) for name in variables.keys()]
-        promise = h5obj.readDatasets(var_paths, block=True, metaOnly=True)
-
-        # create view and move it to the lowest branch node in the tree
-        view = H5View(promise)
-        for step in group.split('/'):
-                view = view[step]
 
         # get variable coordinates
         coord_names = set()
-        for var in view.keys():
+        for var in variables.keys():
             try:
                 # check for coordinate variables
                 var_coords = re.split(';|,| |\n', variables[var]['coordinates'])
@@ -118,50 +116,74 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 var_coords = [var]
 
         # create xarray dataset
+        var_paths = [os.path.join(group, name) for name in variables.keys()]
         data_vars = {}
+        dataset_list = []
         lazy_datasets = {}
-        for ds_name in promise.datasets:
-            meta = promise.getDataset(ds_name).meta  # Contains metadata (shape, dtype, etc.)
-
-            # Get metadata attributes
+        for var_path in var_paths:
+            var_name = var_path.split("/")[-1]
+            meta = variables[var_name]['__metadata__']
             dtype = meta.getNumpyType()
             shape = meta.getShape()
 
+            # apply only relevant hyperslices based on shape length
+            num_dims = len(shape)
+            trimmed_slices = []
+            for i in range(num_dims):
+                dim_len = shape[i]
+                if i < len(hyperslices):
+                    start, stop = hyperslices[i]
+
+                    # clamp the start/stop to valid bounds
+                    start = max(0, min(start, dim_len))
+                    stop = max(start, min(stop, dim_len))
+
+                    trimmed_slices.append([start, stop])
+                else:
+                    # no slice specified for this dimension: take the whole thing
+                    trimmed_slices.append([0, dim_len])
+
+            # create a list of dataset dictionaries to pass to readDatasets
+            dataset_dict = {"dataset": var_path, "hyperslice": copy.deepcopy(trimmed_slices)}
+            dataset_list.append(dataset_dict)
+
+            # compute the sliced shape from the trimmed slices
+            sliced_shape = tuple(stop - start for (start, stop) in trimmed_slices)
+
             # create a lazy dataset wrapper that will trigger async read when accessed
-            lazy_ds = LazyH5Dataset(ds_name, shape, dtype)
-            lazy_datasets[ds_name] = lazy_ds
+            lazy_ds = LazyH5Dataset(var_path, sliced_shape, dtype)
+            lazy_datasets[var_path] = lazy_ds
 
             # determine dimension names
             data_dims = len(shape)
-            if ds_name in col_coords:
-                dim_names = col_coords[ds_name]
+            if var_path in col_coords:
+                dim_names = col_coords[var_path]
             elif data_dims == 1:
                 dim_names = var_coords[0]
             else:
-                dim_names = [f"{ds_name}_{i}" for i in range(len(shape))]
-
-            # extract just the variable name (remove group path)
-            short_var_name = ds_name.split("/")[-1]
+                dim_names = [f"{var_path}_{i}" for i in range(len(shape))]
 
             # store the variable in xarray.Dataset with the short name
-            data_vars[short_var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds).to_xarray_lazy()))
-
-        # meta data promise is no longer needed
-        promise = None
+            data_vars[var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds).to_xarray_lazy()))
 
         # trigger full data read (non-blocking)
-        promise = h5obj.readDatasets(var_paths, block=False, metaOnly=False)
+        promise = h5obj.readDatasets(dataset_list, block=False)
 
         # assign promise to LazyH5Dataset for deferred reading
-        for ds_name in promise.datasets:
+        for ds_name in lazy_datasets:
             lazy_datasets[ds_name].set_promise(promise)
 
         # seperate out the coordinate variables from the data variables
         coords = {}
         for coord_name in coord_names:
             if coord_name in data_vars:
-                # move coordiante variable from data_vars to coords
-                coords[coord_name] = data_vars.pop(coord_name)
+                # xarry expects coordinates to be immediately available
+                data = lazy_datasets[os.path.join(group, coord_name)].read()
+                dims = data_vars[coord_name][0]
+                coords[coord_name] = (dims, data)
+
+                # remove coordinate from data_vars
+                data_vars.pop(coord_name, None)
 
         # Ensure consistency of dimension coordinates
         dimension_coordinates = [val[0] for val in data_vars.values()]

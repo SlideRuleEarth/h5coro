@@ -2,6 +2,7 @@ import numpy as np
 import xarray as xr
 from xarray.backends import BackendArray
 from xarray.core.indexing import ExplicitIndexer
+import threading
 
 class LazyH5Dataset:
     """Lazy loading dataset proxy using asynchronous H5Promise."""
@@ -13,6 +14,7 @@ class LazyH5Dataset:
         self.dtype = dtype
         self.promise = None    # Will be assigned later for actual data
         self.ds_values = None  # Lazy storage for fetched data
+        self.lock = threading.Lock()
 
     def set_promise(self, promise):
         """Assign the full promise for actual data reading."""
@@ -20,16 +22,19 @@ class LazyH5Dataset:
 
     def read(self):
         """Trigger full data read only when accessed."""
-        if self.ds_values is None:
-            if self.promise is None:
-                raise RuntimeError(f"Full data for {self.dataset_name} is not available yet.")
-            self.ds_values = self.promise[self.dataset_name]
-        return self.ds_values
+        if self.ds_values is not None:
+            return self.ds_values
 
-    @property
-    def values(self):
-        """Ensure `.values` retrieves the lazy-loaded data."""
-        return self.read()  # Fetch data when accessed
+        if self.promise is None:
+            raise RuntimeError(f"[{self.dataset_name}] No promise assigned.")
+
+        with self.lock:
+            if self.ds_values is None:
+                self.ds_values = self.promise[self.dataset_name]
+                if self.ds_values is None:
+                    raise RuntimeError(f"[{self.dataset_name}] Promise completed but returned no data.")
+
+        return self.ds_values
 
     @property
     def size(self):
@@ -73,9 +78,13 @@ class LazyXarrayBackendArray(BackendArray):
         return np.prod(self.lazy_ds.shape) if self.lazy_ds.shape is not None else 0
 
     @property
+    def nbytes(self):
+        return self.size * self.dtype.itemsize
+
+    @property
     def values(self):
         """Ensure `.values` retrieves the lazy-loaded data."""
-        return self.lazy_ds.read()  # Fetch data when accessed
+        return self.lazy_ds.read()
 
     def __getitem__(self, key):
         """Lazy indexing—data is only loaded when accessed."""
@@ -88,8 +97,8 @@ class LazyXarrayBackendArray(BackendArray):
         return data[key]  # Apply the correct slice
 
     def __array__(self, dtype=None):
-         """Allow NumPy conversion only when explicitly needed."""
-         return np.asarray(self.lazy_ds.read(), dtype=dtype)
+        """Prevent NumPy conversion."""
+        raise RuntimeError("LazyXarrayBackendArray does not support direct NumPy conversion. Use .read() instead.")
 
 
 class LazyBackendArray:

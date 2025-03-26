@@ -96,14 +96,6 @@ class H5Promise:
         return self.datasets[dataset] == None
 
     #######################
-    # getDataset
-    #######################
-    def getDataset(self, key):
-        """Return the dataset object without forcing immediate resolution."""
-        key = massagePath(key)
-        return self.datasets[key] if key in self.datasets else None
-
-    #######################
     # operator: []
     #######################
     def __getitem__(self, key):
