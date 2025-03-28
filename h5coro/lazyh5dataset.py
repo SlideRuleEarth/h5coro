@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 from xarray.backends import BackendArray
-from xarray.core.indexing import ExplicitIndexer
+from xarray.core.indexing import ExplicitIndexer, OuterIndexer, BasicIndexer
 import threading
 
 class LazyH5Dataset:
@@ -35,6 +35,10 @@ class LazyH5Dataset:
                     raise RuntimeError(f"[{self.dataset_name}] Promise completed but returned no data.")
 
         return self.ds_values
+
+    @property
+    def was_read(self):
+        return self.ds_values is not None
 
     @property
     def size(self):
@@ -86,13 +90,18 @@ class LazyXarrayBackendArray(BackendArray):
         """Ensure `.values` retrieves the lazy-loaded data."""
         return self.lazy_ds.read()
 
+    @property
+    def oindex(self):
+        # This makes xarray use __getitem__ with OuterIndexer
+        return self
+
     def __getitem__(self, key):
         """Lazy indexing—data is only loaded when accessed."""
         data = self.lazy_ds.read()  # Get the full dataset
 
-        # Convert xarray BasicIndexer to a NumPy-friendly index
-        if isinstance(key, ExplicitIndexer):
-            key = key.tuple  # Convert to a tuple of slices
+         # Handle xarray-style indexers
+        if isinstance(key, (ExplicitIndexer, OuterIndexer, BasicIndexer)):
+            key = key.tuple  # Extract tuple of slices or indices
 
         return data[key]  # Apply the correct slice
 
