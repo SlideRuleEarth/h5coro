@@ -172,25 +172,27 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
 
         # NOTE: xarray doesn't support lazy coordinates. They must be resolved at the time xr.Dataset is called.
         # Read coordinate datasets (blocking)
-        coord_promise = h5obj.readDatasets(coord_datasets, block=True)
         coords = {}
-        for d in coord_datasets:
-            var_path = d["dataset"]
-            var_name = var_path.split("/")[-1]
-            lazy_ds = lazy_datasets[var_path]
-            lazy_ds.set_promise(coord_promise)
-            data = lazy_ds.read()
-            dims = data_vars[var_name][0]
-            coords[var_name] = (dims, data)
+        if len(coord_datasets) > 0:
+            coord_promise = h5obj.readDatasets(coord_datasets, block=True)
+            for d in coord_datasets:
+                var_path = d["dataset"]
+                var_name = var_path.split("/")[-1]
+                lazy_ds = lazy_datasets[var_path]
+                lazy_ds.set_promise(coord_promise)
+                data = lazy_ds.read()
+                dims = data_vars[var_name][0]
+                coords[var_name] = (dims, data)
 
-            # Remove coordinate variable from data_vars
-            data_vars.pop(var_name, None)
+                # Remove coordinate variable from data_vars
+                data_vars.pop(var_name, None)
 
         # Trigger async read of remaining datasets (non-blocking)
-        data_promise = h5obj.readDatasets(data_datasets, block=False)
-        for d in data_datasets:
-            var_path = d["dataset"]
-            lazy_datasets[var_path].set_promise(data_promise)
+        if len(data_datasets) > 0:
+            data_promise = h5obj.readDatasets(data_datasets, block=False)
+            for d in data_datasets:
+                var_path = d["dataset"]
+                lazy_datasets[var_path].set_promise(data_promise)
 
         # Ensure consistency of dimension coordinates
         dimension_coordinates = [val[0] for val in data_vars.values()]
@@ -205,6 +207,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 coords = coords,
                 attrs = group_attr,
             )
+
         # Automatically close the h5obj when ds is closed or garbage collected
         weakref.finalize(ds, h5obj.close)
 
