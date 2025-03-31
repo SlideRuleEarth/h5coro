@@ -208,9 +208,14 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 attrs = group_attr,
             )
 
-        # Automatically close the h5obj when ds is closed or garbage collected
-        weakref.finalize(ds, h5obj.close)
+        # Define a cleanup function that releases lazy resources and closes h5obj.
+        def cleanup():
+            for ld in lazy_datasets.values():
+                ld.release()  # Drop the internal reference to shared memory if in use.
+            h5obj.close()     # Close the underlying I/O resources.
 
+        # Attach the cleanup function to the dataset via a finalizer.
+        weakref.finalize(ds, cleanup)
         return ds
 
     def guess_can_open(self, filename_or_obj) -> bool:

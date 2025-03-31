@@ -53,6 +53,10 @@ class LazyH5Dataset:
         """Prevent NumPy conversion."""
         raise RuntimeError("LazyH5Dataset does not support direct NumPy conversion. Use .read() instead.")
 
+    def release(self):
+        """Drop the reference to shared memory data if it was used."""
+        self.ds_values = None
+
 
 
 class LazyXarrayBackendArray(BackendArray):

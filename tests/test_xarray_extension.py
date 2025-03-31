@@ -69,7 +69,7 @@ class TestXArrayExtension:
     ])
     @pytest.mark.parametrize("multi_process", [
         pytest.param(False, id="Single process"),
-        # pytest.param(True,  id="Multi process")  # TODO: this works but generates a shared memory warning.
+        pytest.param(True,  id="Multi process")
     ])
     def test_open_dataset(self, dataset_source, multi_process):
         src = self.get_dataset_source(dataset_source)
