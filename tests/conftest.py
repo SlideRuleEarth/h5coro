@@ -1,5 +1,5 @@
 import pytest
-import gc, time, multiprocessing
+from pathlib import Path
 
 def pytest_addoption(parser):
     parser.addoption("--daac", action="store", default="NSIDC")
@@ -13,14 +13,8 @@ def daac(request):
 
 
 
-# These tests use main and are not compatible with pytest
-IGNORED_FILES = [
-    "test_multiprocess.py", # This test combines all 3 drivers and is redundant with other tests (useful for comparing driver's performance)
-]
-
-def pytest_ignore_collect(path):
-    """
-    Prevent pytest from collecting certain files.
-    """
-    if any(path.basename == filename for filename in IGNORED_FILES):
-        return True  # Ignore these files
+def pytest_ignore_collect(collection_path: Path):
+    IGNORED_FILES = [
+        "test_multiprocess.py", # This test combines all 3 drivers and is redundant with other tests (useful for comparing driver's performance)
+    ]
+    return collection_path.name in IGNORED_FILES

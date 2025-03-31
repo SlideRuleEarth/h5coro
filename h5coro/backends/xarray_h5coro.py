@@ -1,11 +1,14 @@
-from h5coro import h5coro, s3driver, filedriver, webdriver, logger
+from h5coro import h5coro, h5promise, s3driver, filedriver, webdriver, logger
 from h5coro.h5view import H5View
 from h5coro.h5promise import massagePath
+from h5coro.lazyh5dataset import LazyH5Dataset, LazyBackendArray
 import xarray as xr
 from xarray.backends import BackendEntrypoint
 from xarray.core.dataset import Dataset
 import os
 import re
+import copy
+import weakref
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
     '''
@@ -24,7 +27,8 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         col_convs={},
         col_coords={},
         pick_variables=None,
-        drop_variables=None
+        drop_variables=None,
+        hyperslices=[]
     ) -> Dataset:
         '''
         Constructor for the H5CoroBackendEntrypoint class which extends the BackendEntrypoint class from xarray.
@@ -56,14 +60,18 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                         list of variables to exclusively include in the final xarray
         drop_variables: list
                         list of variables not to include in the final xarray
+        hyperslices:    list
+                        A list of lists specifying the range of data to extract for each dimension.
+                        Each variable in the group will have the corresponding slices applied to its dimensions.
+                        [[start_dim0, end_dim0], [start_dim1, end_dim1], ...]
         '''
-        # sanitize input parameters
+        # Sanitize input parameters
         group = massagePath(group)
 
-        # set h5coro logging level
+        # Set h5coro logging level
         logger.config(log_level)
 
-        # determine driver
+        # Determine driver
         if filename_or_obj.startswith("file://"):
             filename_or_obj = filename_or_obj[len("file://"):]
             driver = filedriver.FileDriver
@@ -72,13 +80,13 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         else:
             driver = s3driver.S3Driver
 
-        # connect to the s3 object
+        # Connect to the s3 object
         h5obj = h5coro.H5Coro(filename_or_obj, driver, credentials=credentials, verbose=verbose, multiProcess=multi_process)
 
-        # determine the variables and attributes in the specified group
+        # Determine the variables and attributes in the specified group
         variables, group_attr, _groups = h5obj.list(group, w_attr=True)
 
-        # override variables requested to be read (remove everything not in list)
+        # Override variables requested to be read (remove everything not in list)
         if type(pick_variables) == list and len(pick_variables) > 0:
             vars_to_drop = []
             for var_to_pick in variables:
@@ -87,60 +95,104 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             for var_to_drop in vars_to_drop:
                 variables.pop(var_to_drop)
 
-        # remove variables that have been requested to be dropped
+        # Remove variables that have been requested to be dropped
         if type(drop_variables) == list:
             for var_to_drop in drop_variables:
                 if var_to_drop in variables:
                     variables.pop(var_to_drop)
 
-        # submit data request for variables and attributes
-        var_paths = [os.path.join(group, name) for name in variables.keys()]
-        promise = h5obj.readDatasets(var_paths, block=True)
-
-        # create view and move it to the lowest branch node in the tree
-        view = H5View(promise)
-        for step in group.split('/'):
-                view = view[step]
-
-        # format the data variables (and coordinate variables)
-        data_vars = {}
+        # Get variable coordinates
         coord_names = set()
-        for var in view.keys():
-            # get variable coordinates
+        for var in variables.keys():
             try:
-                # check for coordinate variables
+                # Check for coordinate variables
                 var_coords = re.split(';|,| |\n', variables[var]['coordinates'])
                 var_coords = [c for c in var_coords if c]
-                # add any coordinates to the coord_names set
+                # Add any coordinates to the coord_names set
                 for c in var_coords:
                     coord_names.add(c)
             except KeyError:
-                # if no coordinates were listed for that variable then set it's coordinate as itself
+                # If no coordinates were listed for that variable then set it's coordinate as itself
                 var_coords = [var]
-            # set variable data
-            if var in col_convs:
-                data = col_convs[var](view[var])
-            else:
-                data = view[var]
-            # get dimensionality of data
-            data_dims = len(data.shape)
-            # set dimension names
-            if var in col_coords:
-                dim_names = col_coords[var]
+
+        # Create xarray dataset
+        var_paths = [os.path.join(group, name) for name in variables.keys()]
+        data_vars = {}
+        lazy_datasets = {}
+        coord_datasets = []
+        data_datasets = []
+        for var_path in var_paths:
+            var_name = var_path.split("/")[-1]
+            meta = variables[var_name]['__metadata__']
+            dtype = meta.getNumpyType()
+            shape = meta.getShape()
+
+            # Apply only relevant hyperslices based on shape length
+            num_dims = len(shape)
+            trimmed_slices = []
+            for i in range(num_dims):
+                dim_len = shape[i]
+                if i < len(hyperslices):
+                    start, stop = hyperslices[i]
+
+                    # Clamp the start/stop to valid bounds
+                    start = max(0, min(start, dim_len))
+                    stop = max(start, min(stop, dim_len))
+                    trimmed_slices.append([start, stop])
+                else:
+                    # No slice specified for this dimension: take the whole thing
+                    trimmed_slices.append([0, dim_len])
+
+            # Compute the sliced shape from the trimmed slices
+            sliced_shape = tuple(stop - start for (start, stop) in trimmed_slices)
+
+            # Create a lazy dataset wrapper that will trigger async read when accessed
+            lazy_ds = LazyH5Dataset(var_path, sliced_shape, dtype)
+            lazy_datasets[var_path] = lazy_ds
+
+            # Determine dimension names
+            data_dims = len(shape)
+            if var_name in col_coords:
+                dim_names = col_coords[var_name]
             elif data_dims == 1:
                 dim_names = var_coords[0]
             else:
-                # unable to set multidimensional coordinates automatically
-                dim_names = [f'{var}_{n}' for n in range(data_dims)]
-            # add to data variables (if a coordinate, will later be moved to coordinates)
-            data_vars[var] = (dim_names, data)
+                dim_names = [f"{var_name}_{i}" for i in range(len(shape))]
 
-        # seperate out the coordinate variables from the data variables
+            dataset_dict = {"dataset": var_path, "hyperslice": copy.deepcopy(trimmed_slices)}
+
+            # Separate coordinate vs data variable datasets, they will be read separately
+            if var_name in coord_names:
+                coord_datasets.append(dataset_dict)
+            else:
+                data_datasets.append(dataset_dict)
+
+            # Store the variable in xarray.Dataset
+            data_vars[var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds).to_xarray_lazy()))
+
+        # NOTE: xarray doesn't support lazy coordinates. They must be resolved at the time xr.Dataset is called.
+        # Read coordinate datasets (blocking)
         coords = {}
-        for coord_name in coord_names:
-            if coord_name in data_vars:
-                # move coordiante variable from data_vars to coords
-                coords[coord_name] = data_vars.pop(coord_name)
+        if len(coord_datasets) > 0:
+            coord_promise = h5obj.readDatasets(coord_datasets, block=True)
+            for d in coord_datasets:
+                var_path = d["dataset"]
+                var_name = var_path.split("/")[-1]
+                lazy_ds = lazy_datasets[var_path]
+                lazy_ds.set_promise(coord_promise)
+                data = lazy_ds.read()
+                dims = data_vars[var_name][0]
+                coords[var_name] = (dims, data)
+
+                # Remove coordinate variable from data_vars
+                data_vars.pop(var_name, None)
+
+        # Trigger async read of remaining datasets (non-blocking)
+        if len(data_datasets) > 0:
+            data_promise = h5obj.readDatasets(data_datasets, block=False)
+            for d in data_datasets:
+                var_path = d["dataset"]
+                lazy_datasets[var_path].set_promise(data_promise)
 
         # Ensure consistency of dimension coordinates
         dimension_coordinates = [val[0] for val in data_vars.values()]
@@ -150,11 +202,21 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             if coord_name in dimension_coordinates:
                 coords[coord_name] = (coord_name, coordinate[1])
 
-        return xr.Dataset(
+        ds = xr.Dataset(
                 data_vars,
                 coords = coords,
                 attrs = group_attr,
             )
+
+        # Define a cleanup function that releases lazy resources and closes h5obj.
+        def cleanup():
+            for ld in lazy_datasets.values():
+                ld.release()  # Drop the internal reference to shared memory if in use.
+            h5obj.close()     # Close the underlying I/O resources.
+
+        # Attach the cleanup function to the dataset via a finalizer.
+        weakref.finalize(ds, cleanup)
+        return ds
 
     def guess_can_open(self, filename_or_obj) -> bool:
         try:
