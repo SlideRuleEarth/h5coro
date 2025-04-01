@@ -7,6 +7,7 @@ import boto3
 import h5coro
 from h5coro import s3driver, logger
 import numpy as np
+import copy
 
 # configure h5coro
 import logging
@@ -59,7 +60,7 @@ def eso_h5py_test(hyperslice, with_s3fs):
 def eso_h5coro_test(hyperslice, multiProcess=True):
     granule = 'sliderule/data/test/OR_ABI-L1b-RadF-M6C05_G17_s20192600400339_e20192600409406_c20192600409460.nc'
     variable = '/Rad'
-    datasets = [ {"dataset": variable, "hyperslice": hyperslice } ]
+    datasets = [ {"dataset": variable, "hyperslice": copy.copy(hyperslice) } ]
     credentials = {"profile":"default"}
 
     # read dataset
