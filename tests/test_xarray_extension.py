@@ -2,11 +2,11 @@ import pytest
 import boto3
 import numpy as np
 import xarray as xr
-from h5coro.lazyh5dataset import LazyXarrayBackendArray
+from h5coro.lazyh5dataset import LazyBackendArray
 from .test_helpers import *
 
 def get_backend_lazy_array(array):
-    """Unwrap nested xarray wrappers to get to LazyXarrayBackendArray."""
+    """Unwrap nested xarray wrappers to get to LazyBackendArray."""
     visited = set()
     while hasattr(array, "array") and id(array) not in visited:
         visited.add(id(array))
@@ -109,13 +109,13 @@ class TestXArrayExtension:
         # Verify that variables were NOT eagerly read
         for var in ds.data_vars:
             lazyarray = get_backend_lazy_array(ds[var].variable._data)
-            assert isinstance(lazyarray, LazyXarrayBackendArray), f"{var} is not backed by LazyXarrayBackendArray (got {type(lazyarray)})"
+            assert isinstance(lazyarray, LazyBackendArray), f"{var} is not backed by LazyBackendArray (got {type(lazyarray)})"
             assert not lazyarray.lazy_ds.was_read, f"{var} was eagerly read"
 
         # Verify that coordinates were read - xarray needs to read and resolve all coordinates data to be able to read variables
         for coord in ds.coords:
             lazyarray = get_backend_lazy_array(ds[var].variable._data)
-            assert isinstance(lazyarray, LazyXarrayBackendArray), f"{coord} is not backed by LazyXarrayBackendArray (got {type(lazyarray)})"
+            assert isinstance(lazyarray, LazyBackendArray), f"{coord} is not backed by LazyBackendArray (got {type(lazyarray)})"
             assert not lazyarray.lazy_ds.was_read, f"{coord} was not read"
 
         # Verify that all expected dimensions are present and have the correct size

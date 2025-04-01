@@ -168,7 +168,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 data_datasets.append(dataset_dict)
 
             # Store the variable in xarray.Dataset
-            data_vars[var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds).to_xarray_lazy()))
+            data_vars[var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds)))
 
         # NOTE: xarray doesn't support lazy coordinates. They must be resolved at the time xr.Dataset is called.
         # Read coordinate datasets (blocking)

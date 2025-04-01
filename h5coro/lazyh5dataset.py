@@ -59,7 +59,7 @@ class LazyH5Dataset:
 
 
 
-class LazyXarrayBackendArray(BackendArray):
+class LazyBackendArray(BackendArray):
     """Xarray-compatible lazy array that prevents eager reading."""
 
     def __init__(self, lazy_ds):
@@ -111,49 +111,4 @@ class LazyXarrayBackendArray(BackendArray):
 
     def __array__(self, dtype=None):
         """Prevent NumPy conversion."""
-        raise RuntimeError("LazyXarrayBackendArray does not support direct NumPy conversion. Use .read() instead.")
-
-
-class LazyBackendArray:
-    """Xarray-compatible backend array for LazyH5Dataset that prevents forced reads."""
-
-    def __init__(self, lazy_ds):
-        self.lazy_ds = lazy_ds
-        self.array = LazyXarrayBackendArray(lazy_ds)  # Properly wrap for Xarray backend
-
-    @property
-    def shape(self):
-        """Ensure xarray recognizes the correct shape."""
-        return self.array.shape
-
-    @property
-    def dtype(self):
-        """Ensure xarray recognizes the correct dtype."""
-        return self.array.dtype
-
-    @property
-    def size(self):
-        """Ensure `.size` returns total number of elements."""
-        return self.array.size
-
-    @property
-    def nbytes(self):
-        """Ensure xarray can compute memory usage."""
-        return self.array.nbytes
-
-    @property
-    def values(self):
-        """Ensure `.values` retrieves the lazy-loaded data."""
-        return self.array.values
-
-    def __getitem__(self, key):
-        """Lazy slice access."""
-        return self.array[key]
-
-    def __array__(self, dtype=None):
-        """Prevent NumPy conversion."""
         raise RuntimeError("LazyBackendArray does not support direct NumPy conversion. Use .read() instead.")
-
-    def to_xarray_lazy(self):
-        """Return an xarray-compatible object that prevents NumPy conversion."""
-        return self.array  # Use LazyXarrayBackendArray
