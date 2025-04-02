@@ -292,7 +292,8 @@ class H5Coro:
                 driver.close()
             cache.clear()
             cache_locks.clear()
-            log.info("H5Coro resources cleaned up.")
+            if self.verbose:
+                log.info("H5Coro resources cleaned up.")
         except Exception as e:
             log.error(f"Error while cleaning up resources: {e}")
 
