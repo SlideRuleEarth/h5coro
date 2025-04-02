@@ -180,7 +180,7 @@ class H5Dataset:
         elif self.meta.address == INVALID_VALUE[self.resourceObject.offsetSize]:
             raise FatalError(f'invalid data address for {self.dataset}')
         elif len(self.hyperslice) > self.meta.ndims:
-            raise FatalError(f'cannot provide hyperslice with more dimensions that dataset: {len(self.hyperslice)} > {self.meta.ndims}')
+            raise FatalError(f'cannot provide hyperslice with more dimensions than dataset: {len(self.hyperslice)} > {self.meta.ndims}')
         elif (self.meta.filter[self.meta.DEFLATE_FILTER] or self.meta.filter[self.meta.SHUFFLE_FILTER]) and \
              ((self.meta.layout == self.COMPACT_LAYOUT) or (self.meta.layout == self.CONTIGUOUS_LAYOUT)):
             raise FatalError(f'filters unsupported on non-chunked layouts')
