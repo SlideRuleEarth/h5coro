@@ -172,6 +172,9 @@ class H5Coro:
         attributes = {}
         metadata = None
 
+        # message path
+        path = massagePath(path)
+
         # read elements at path
         H5Dataset(self, path, earlyExit=False, metaOnly=True, enableAttributes=w_attr)
 

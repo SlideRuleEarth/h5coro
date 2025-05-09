@@ -304,10 +304,13 @@ class H5Dataset:
             if self.meta.ndims > 1:
                 self.values = self.values.reshape(self.shape)
         elif self.meta.type == H5Metadata.STRING_TYPE or self.meta.type == H5Metadata.VL_STRING_TYPE:
-            if self.meta.signedval:
-                self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
-            else:
-                self.values = ctypes.create_string_buffer(buffer).value.decode('utf-8')
+            try:
+                if self.meta.signedval:
+                    self.values = ctypes.create_string_buffer(buffer).value.decode('ascii')
+                else:
+                    self.values = ctypes.create_string_buffer(buffer).value.decode('utf-8')
+            except:
+                self.values = f'{buffer}'
         else:
             log.warning(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
