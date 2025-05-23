@@ -209,8 +209,7 @@ class H5Dataset:
         # calculate shape and number of elements
         for d in range(self.meta.ndims):
             elements_in_dimension = self.hyperslice[d][1] - self.hyperslice[d][0]
-            if elements_in_dimension > 0:
-                self.numElements *= elements_in_dimension
+            self.numElements *= elements_in_dimension
             self.shape.append(elements_in_dimension)
 
         # calculate size of buffer
