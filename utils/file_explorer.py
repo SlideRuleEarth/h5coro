@@ -1,5 +1,6 @@
 from h5coro import h5coro, s3driver, filedriver, logger
 import earthaccess
+import traceback
 import argparse
 import logging
 import sys
@@ -52,66 +53,104 @@ print(f'complete.')
 
 # REPL #
 current_path = args.path
+build_selection = True
 while True:
 
-    # State #
-    print(f'Exploring {current_path}')
-    label = f'(..)'
-    print(f'{label:<5} <parent>')
+    # Build Selection List #
+    if build_selection:
 
-    # Inspect Current Path #
-    variables, attributes, groups = h5obj.list(current_path, w_attr=args.enableAttributes)
+        # State #
+        print(f'Exploring {current_path}')
+        label = f'(..)'
+        print(f'{label:<5} <parent>')
 
-    # Initialize Selection List #
-    selection = {}
+        # Inspect Current Path #
+        variables, attributes, groups = h5obj.list(current_path, w_attr=args.enableAttributes)
 
-    # List Variables #
-    v = 0
-    for variable in variables:
-        label = f'(v{v})'
-        print(f'{label:<5} {variable}')
-        selection[f'v{v}'] = variable
-        v += 1
+        # Initialize Selection List #
+        selection = {}
 
-    # List Groups #
-    g = 0
-    for group in groups:
-        label = f'(g{g})'
-        print(f'{label:<5} {group}')
-        selection[f'g{g}'] = group
-        g += 1
+        # List Attributes #
+        a = 0
+        sorted_attributes = list(attributes.keys())
+        sorted_attributes.sort()
+        for attribute in sorted_attributes:
+            label = f'(a{a})'
+            print(f'{label:<5} {attribute}')
+            selection[f'a{a}'] = attribute
+            a += 1
 
-    # List Attributes #
-    a = 0
-    for attribute in attributes:
-        label = f'(a{a})'
-        print(f'{label:<5} {attribute}')
-        selection[f'a{a}'] = attribute
-        a += 1
+        # List Variables #
+        v = 0
+        sorted_variables = list(variables.keys())
+        sorted_variables.sort()
+        for variable in sorted_variables:
+            label = f'(v{v})'
+            print(f'{label:<5} {variable}')
+            selection[f'v{v}'] = variable
+            v += 1
+
+        # List Groups #
+        g = 0
+        sorted_groups = list(groups.keys())
+        sorted_groups.sort()
+        for group in sorted_groups:
+            label = f'(g{g})'
+            print(f'{label:<5} {group}')
+            selection[f'g{g}'] = group
+            g += 1
+        
+        # Reset Selection Boolean #
+        build_selection = False
 
     # Get User Input #
     line = input("> ").strip()
     try:
-        if line == 'exit':
+        if line == 'exit' or line == 'quit':
             break
         elif len(line) <= 0:
             pass
-        elif line[0] == 'v':
-            print(f'{selection[line]} - {variables[selection[line]]}')
+        elif line[0] == '/':
+            entry = line[1:]
+            if entry in attributes:
+                print(f'* {attributes[entry]}')
+            if entry in variables:
+                print(f'. {variables[entry]}')
+            if entry in groups:
+                print(f'| {groups[entry]}')
+                if current_path == "/":
+                    current_path = entry
+                else:
+                    current_path = f'{current_path}/{entry}'
+                build_selection = True
+            else:
+                for attribute in sorted_attributes:
+                    if attribute.startswith(entry):
+                        print(f'* {attribute}')
+                for variable in sorted_variables:
+                    if variable.startswith(entry):
+                        print(f'. {variable}')
+                for group in sorted_groups:
+                    if group.startswith(entry):
+                        print(f'| {group}')
         elif line[0] == 'a':
-            print(f'{selection[line]} - {attributes[selection[line]]}')
+            print(f'* {selection[line]} - {attributes[selection[line]]}')
+        elif line[0] == 'v':
+            print(f'. {selection[line]} - {variables[selection[line]]}')
         elif line[0] == 'g':
-            print(f'{selection[line]} - {groups[selection[line]]}')
+            print(f'| {selection[line]} - {groups[selection[line]]}')
             if current_path == "/":
                 current_path = selection[line]
             else:
                 current_path = f'{current_path}/{selection[line]}'
+            build_selection = True
         elif line == "..":
             current_path = '/'.join(current_path.split("/")[:-1])
             if current_path == "":
                 current_path = "/"
+            build_selection = True
     except Exception as e:
-        print(f'Invalid entry')
+        print(f'Invalid entry', e, traceback.format_exc())
 
 
 
