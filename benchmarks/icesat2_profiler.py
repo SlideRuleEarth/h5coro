@@ -47,8 +47,8 @@ from sliderule import sliderule, h5, icesat2
 ###############################################################################
 
 parser = argparse.ArgumentParser(description="""Subset granules""")
-parser.add_argument('--granule03','-p', type=str, default="data/ATLAS/ATL03_20181017222812_02950102_005_01.h5")
-parser.add_argument('--granule06','-c', type=str, default="data/ATLAS/ATL06_20181017222812_02950102_005_01.h5")
+parser.add_argument('--granule03','-p', type=str, default="data/ATLAS/ATL03_20181017222812_02950102_007_01.h5")
+parser.add_argument('--granule06','-c', type=str, default="data/ATLAS/ATL06_20181017222812_02950102_007_01.h5")
 parser.add_argument('--bucket','-b', type=str, default="sliderule")
 parser.add_argument('--region','-r', type=str, default="us-west-2")
 parser.add_argument('--aoi','-a', type=str, default="data/grandmesa.geojson")
