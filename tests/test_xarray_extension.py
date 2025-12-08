@@ -82,7 +82,9 @@ class TestXArrayExtension:
                              pick_variables=self.pick_variables,
                              multi_process=multi_process)
 
+        print("\nDataset opened with source:", dataset_source, "multi_process:", multi_process)
         print(ds)
+
 
         # Check that all expected variables are present and aligned with 'photon'
         assert "photon" in ds.dims
@@ -90,12 +92,15 @@ class TestXArrayExtension:
             if var in ds:
                 assert ds[var].dims[0] == "photon"
 
+        print("All variables are aligned with 'photon' dimension.")
+
         # Check that all expected coordinates are 1D and aligned with 'photon'
         for coord in ds.coords:
             dims = ds[coord].dims
             assert len(dims) == 1, f"{coord} is not 1D"
             assert dims[0] == "photon", f"{coord} is not aligned with 'photon'"
 
+        print("All coordinates are 1D and aligned with 'photon' dimension.")
 
         # Check that all expected coordinates are present and only those
         assert set(ds.coords) == set(XARRAY_COORDINATES), f"Expected coords {XARRAY_COORDINATES}, got {list(ds.coords)}"
@@ -106,11 +111,15 @@ class TestXArrayExtension:
         # Check that all expected data variables are present and only those
         assert set(ds.data_vars) == set(expected_data_vars), f"Expected data_vars {expected_data_vars}, got {list(ds.data_vars)}"
 
+        print("All expected data variables are present and only those.")
+
         # Verify that variables were NOT eagerly read
         for var in ds.data_vars:
             lazyarray = get_backend_lazy_array(ds[var].variable._data)
             assert isinstance(lazyarray, LazyBackendArray), f"{var} is not backed by LazyBackendArray (got {type(lazyarray)})"
             assert not lazyarray.lazy_ds.was_read, f"{var} was eagerly read"
+
+        print("All variables were NOT eagerly read.")
 
         # Verify that coordinates were read - xarray needs to read and resolve all coordinates data to be able to read variables
         for coord in ds.coords:
@@ -118,20 +127,28 @@ class TestXArrayExtension:
             assert isinstance(lazyarray, LazyBackendArray), f"{coord} is not backed by LazyBackendArray (got {type(lazyarray)})"
             assert not lazyarray.lazy_ds.was_read, f"{coord} was not read"
 
+        print("All coordinates were read.")
+
         # Verify that all expected dimensions are present and have the correct size
         for dim, expected_size in XARRAY_EXPECTED_SIZES.items():
             assert dim in ds.sizes, f"Missing dimension: {dim}"
             assert ds.sizes[dim] == expected_size, f"Dimension {dim} size mismatch: expected {expected_size}, got {ds.sizes[dim]}"
+
+        print("All expected dimensions are present and have the correct size.")
 
         # Verify that all expected variables have the correct shape
         for var, shape in XARRAY_EXPECTED_VARS_SHAPES.items():
             assert var in ds.data_vars, f"Missing variable: {var}"
             assert ds[var].shape == shape, f"Shape mismatch for {var}: expected {shape}, got {ds[var].shape}"
 
+        print("All expected variables have the correct shape.")
+
         # Verify that all expected variables have the correct shape
         for coord, shape in XARRAY_EXPECTED_COORDS_SHAPES.items():
             assert coord in ds.coords, f"Missing coordinate: {coord}"
             assert ds[coord].shape == shape, f"Shape mismatch for {coord}: expected {shape}, got {ds[coord].shape}"
+
+        print("All expected coordinates have the correct shape.")
 
         # Use only the variable name inside the selected group
         xarray_results = {entry["dataset"].split("/")[-1]: ds[entry["dataset"].split("/")[-1]].values for entry in self.datasets}
@@ -139,6 +156,9 @@ class TestXArrayExtension:
 
         # Clean up
         ds.close()
+        print("Dataset closed.")
+
+
 
     # Define a parameterized test for different dataset sources
     @pytest.mark.parametrize("dataset_source", [

@@ -4,15 +4,16 @@ channels:
   - conda-forge
 dependencies:
   - boto3
+  - earthaccess
   - h5py
   - ipykernel
   - jupyterlab
   - jupyterlab_widgets
   - numpy
   - matplotlib
-  - python>=3.7
+  - python>=3.10,<=3.12.0  # multiprocessing compatibility, newer versions changed fork/multi-process behavior
   - pip
   - pytest
+  - requests
   - s3fs
-  - sliderule
-  - xarray
+  - xarray=2025.6.1 # weakref finalizer on the Dataset object, newer xarray backend features breaks current code
