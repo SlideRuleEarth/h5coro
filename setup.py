@@ -22,6 +22,8 @@ setup(
     long_description_content_type="text/markdown",
     url='https://github.com/SlideRuleEarth/h5coro/',
     license='BSD 3-Clause',
+    python_requires=">=3.10,<=3.12.0",
+    install_requires=install_requires,
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Science/Research',
