@@ -8,7 +8,6 @@ from xarray.core.dataset import Dataset
 import os
 import re
 import copy
-import weakref
 
 class H5CoroBackendEntrypoint(BackendEntrypoint):
     '''
@@ -121,6 +120,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         lazy_datasets = {}
         coord_datasets = []
         data_datasets = []
+        data_promise = None
         for var_path in var_paths:
             var_name = var_path.split("/")[-1]
             meta = variables[var_name]['__metadata__']
@@ -208,14 +208,28 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 attrs = group_attr,
             )
 
-        # Define a cleanup function that releases lazy resources and closes h5obj.
+        # Define a cleanup function registered with xarray instead of relying on GC.
+        cleanup_called = False
+
         def cleanup():
+            nonlocal cleanup_called
+            if cleanup_called:
+                return
+            cleanup_called = True
+
+            # Ensure background reads finish before closing the driver.
+            if data_promise is not None:
+                for dataset in data_promise.keys():
+                    try:
+                        data_promise.waitOnResult(dataset)
+                    except Exception as exc:
+                        logger.log.warning(f"Error waiting on promise for {dataset}: {exc}")
+
             for ld in lazy_datasets.values():
                 ld.release()  # Drop the internal reference to shared memory if in use.
             h5obj.close()     # Close the underlying I/O resources.
 
-        # Attach the cleanup function to the dataset via a finalizer.
-        weakref.finalize(ds, cleanup)
+        ds.set_close(cleanup)
         return ds
 
     def guess_can_open(self, filename_or_obj) -> bool:

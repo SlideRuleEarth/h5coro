@@ -16,4 +16,4 @@ dependencies:
   - pytest
   - requests
   - s3fs
-  - xarray=2025.6.1 # weakref finalizer on the Dataset object, newer xarray backend features breaks current code
+  - xarray
