@@ -11,7 +11,7 @@ dependencies:
   - jupyterlab_widgets
   - numpy
   - matplotlib
-  - python>=3.10,<=3.12.0  # multiprocessing compatibility, newer versions changed fork/multi-process behavior
+  - python>=3.10
   - pip
   - pytest
   - requests

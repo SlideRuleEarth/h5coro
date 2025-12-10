@@ -30,12 +30,15 @@
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 from datetime import datetime
-from multiprocessing import shared_memory, Process
+import importlib
+import multiprocessing as mp
+from multiprocessing import shared_memory
 import struct
 import zlib
 import ctypes
 import numpy
 import os
+import copy
 
 ###############################################################################
 # CONSTANTS
@@ -66,23 +69,73 @@ class FatalError(RuntimeError):
 # LOCAL FUNCTIONS
 ###############################################################################
 
-def BTreeReader(dataset, buffer, level):
-    """Function executed in a forked process to read BTree."""
+def _resolve_driver(path):
+    """Import and return a driver class from a '<module>:<ClassName>' string."""
+    module, cls_name = path.split(":")
+    mod = importlib.import_module(module)
+    return getattr(mod, cls_name)
+
+
+class _SpawnResource:
+    """Lightweight resource used inside spawned workers (no caches/locks)."""
+    def __init__(self, driver, *, offsetSize, lengthSize, baseAddress, verbose, errorChecking):
+        self.driver = driver
+        self.offsetSize = offsetSize
+        self.lengthSize = lengthSize
+        self.baseAddress = baseAddress
+        self.verbose = verbose
+        self.errorChecking = errorChecking
+
+    def ioRequest(self, pos, size, caching=True, prefetch=False):
+        return self.driver.read(pos + self.baseAddress, size)
+
+    def close(self):
+        if hasattr(self.driver, "close"):
+            self.driver.close()
+
+
+def BTreeReader(state, shm_name):
+    """Function executed in a spawned process to read BTree."""
+    shm = None
     driver = None
     try:
-        # Set dummy locks and create a new driver
-        dataset.resourceObject.setDummyLocks()
-        driver = dataset.resourceObject.driver.copy(max_connections=5)
-        dataset.resourceObject.driver = driver
+        driver_cls = _resolve_driver(state["driver_path"])
+        driver = driver_cls(state["resource"], state["credentials"])
+        shm = shared_memory.SharedMemory(name=shm_name)
+
+        resource = _SpawnResource(
+            driver,
+            offsetSize=state["offsetSize"],
+            lengthSize=state["lengthSize"],
+            baseAddress=state["baseAddress"],
+            verbose=state["verbose"],
+            errorChecking=state["errorChecking"],
+        )
+
+        dataset = H5Dataset.__new__(H5Dataset)
+        dataset.resourceObject = resource
+        dataset.meta = state["meta"]
+        dataset.hyperslice = state["hyperslice"]
+        dataset.shape = state["shape"]
+        dataset.dataset = state["dataset"]
+        dataset.dataChunkBufferSize = state["dataChunkBufferSize"]
+        dataset.dimensionsInChunks = state["dimensionsInChunks"]
+        dataset.chunkStepSize = state["chunkStepSize"]
+        dataset.hypersliceChunkStart = state["hypersliceChunkStart"]
+        dataset.hypersliceChunkEnd = state["hypersliceChunkEnd"]
+        dataset.pos = state["pos"]
+        dataset.sharedBuffer = None
+        dataset.values = None
 
         # Read BTree
-        dataset.readBTreeV1(buffer, level)
+        dataset.readBTreeV1(shm.buf, state["datasetLevel"])
 
     except Exception as e:
-        log.error(f"[{os.getpid()}] FAILED BTreeReader for dataset {dataset.dataset}: {e}")
+        log.error(f"[{os.getpid()}] FAILED BTreeReader for dataset {state.get('dataset', '?')}: {e}")
     finally:
-        # Close driver
-        if driver is not None:
+        if shm is not None:
+            shm.close()
+        if driver is not None and hasattr(driver, "close"):
             driver.close()
 
 
@@ -278,7 +331,9 @@ class H5Dataset:
                 self.resourceObject.processSemaphore.acquire()
                 reader = None
                 try:
-                    reader = Process(target=BTreeReader, args=(self, buffer, datasetLevel))
+                    state = self._spawn_state(datasetLevel)
+                    ctx = mp.get_context("spawn")
+                    reader = ctx.Process(target=BTreeReader, args=(state, self.sharedBuffer.name))
                     if reader is None:
                         log.error("Process call failed.")
                     reader.start()
@@ -286,7 +341,7 @@ class H5Dataset:
                         log.error("Process failed to start.")
                     reader.join()
                 except Exception as e:
-                    log.error(f"Error in forked process while reading BTree: {e}")
+                    log.error(f"Error in process while reading BTree: {e}")
 
                 self.resourceObject.processSemaphore.release()
             else:
@@ -321,6 +376,37 @@ class H5Dataset:
         if self.sharedBuffer != None:
             self.sharedBuffer.close()
             self.sharedBuffer.unlink()
+
+    #######################
+    # _spawn_state
+    #######################
+    def _spawn_state(self, datasetLevel):
+        """Serialize state needed by the spawned reader process."""
+        driver = self.resourceObject.driver
+        driver_path = f"{driver.__class__.__module__}:{driver.__class__.__name__}"
+        credentials = getattr(driver, "cached_credentials", {})
+        state = {
+            "dataset": self.dataset,
+            "hyperslice": self.hyperslice,
+            "shape": self.shape,
+            "meta": copy.deepcopy(self.meta),
+            "pos": self.pos,
+            "dataChunkBufferSize": self.dataChunkBufferSize,
+            "dimensionsInChunks": self.dimensionsInChunks,
+            "chunkStepSize": self.chunkStepSize,
+            "hypersliceChunkStart": self.hypersliceChunkStart,
+            "hypersliceChunkEnd": self.hypersliceChunkEnd,
+            "datasetLevel": datasetLevel,
+            "resource": self.resourceObject.resource,
+            "driver_path": driver_path,
+            "credentials": credentials,
+            "offsetSize": self.resourceObject.offsetSize,
+            "lengthSize": self.resourceObject.lengthSize,
+            "baseAddress": self.resourceObject.baseAddress,
+            "verbose": self.resourceObject.verbose,
+            "errorChecking": self.resourceObject.errorChecking,
+        }
+        return state
 
     #######################
     # readField
