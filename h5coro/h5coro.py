@@ -28,6 +28,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import sys
 import threading
 import weakref
 
@@ -104,6 +105,11 @@ class H5Coro:
         multiProcess = False,
         maxProcesses = None
     ):
+        # Disable multiprocess on Python > 3.12.0 due to fork-after-threads deadlocks in newer runtimes.
+        if multiProcess and (sys.version_info[:3] > (3, 12, 0)):
+            log.warning("multiProcess disabled on Python >3.12.0 due to fork-after-threads deadlock risk; falling back to single process.")
+            multiProcess = False
+
         self.resource = resource
         self.driver = driverClass(resource, credentials)
 

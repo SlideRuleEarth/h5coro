@@ -30,7 +30,8 @@
 from h5coro.h5metadata import H5Metadata
 from h5coro.logger import log
 from datetime import datetime
-from multiprocessing import shared_memory, Process
+import multiprocessing as mp
+from multiprocessing import shared_memory
 import struct
 import zlib
 import ctypes
@@ -278,7 +279,17 @@ class H5Dataset:
                 self.resourceObject.processSemaphore.acquire()
                 reader = None
                 try:
-                    reader = Process(target=BTreeReader, args=(self, buffer, datasetLevel))
+                    # Fork is used here for performance: with the current architecture the main process
+                    # already holds drivers, metadata, and shared buffers. Spawning new interpreters would
+                    # require pickling parameters, rebuilding drivers, and reloading metadata in each child,
+                    # which is significantly slower. This fork-based path only runs on POSIX systems.
+                    # WARNING: this relies on fork-after-threads behavior that happened to work on Python <= 3.12.0
+                    # newer Python (3.13+) is stricter and can deadlock because helper threads in the parent
+                    # hold locks the child process inherits.
+                    if "fork" not in mp.get_all_start_methods():
+                        raise RuntimeError("Multi-process mode requires fork; not available on this platform.")
+                    ctx = mp.get_context("fork")
+                    reader = ctx.Process(target=BTreeReader, args=(self, buffer, datasetLevel))
                     if reader is None:
                         log.error("Process call failed.")
                     reader.start()
