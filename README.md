@@ -38,7 +38,7 @@ so you can use it like any other [xarray engine](https://docs.xarray.dev/en/stab
 
 ```python
 import xarray as xr
-h5ds = xr.open_dataset("file.h5", engine="h5coro")
+h5ds = xr.open_dataset("file.h5", engine="h5coro", group="dataset_group")
 ```
 
 You can see what backends are available in xarray using:
@@ -46,6 +46,9 @@ You can see what backends are available in xarray using:
 xr.backends.list_engines()
 ```
 
+The `group` keyword is required for the `h5coro` backend, and Xarray will only read at the group level.
+The backend does not support reading of groups containing variables of varying lengths.
+To only load specific variables, supply a list of variable names as strings to the `pick_variables` kwarg.
 
 ## Example Usage
 
@@ -78,6 +81,7 @@ The calling application must have credentials to access the object in the specif
 
 #### (3) Read with h5coro Object
 The `H5Coro.read` function takes a list of dictionary objects that describe the datasets that need to be read in parallel.
+Only full paths to specific variables are accepted; h5coro does not read at the group level.
 
 If the `block` parameter is set to True, then the code will wait for all of the datasets to be read before returning; otherwise, the code will return immediately and not until the dataset within the reader object is access will the code block.
 
