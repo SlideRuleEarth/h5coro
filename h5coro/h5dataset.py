@@ -283,7 +283,7 @@ class H5Dataset:
                     # already holds drivers, metadata, and shared buffers. Spawning new interpreters would
                     # require pickling parameters, rebuilding drivers, and reloading metadata in each child,
                     # which is significantly slower. This fork-based path only runs on POSIX systems.
-                    # WARNING: this relies on fork-after-threads behavior that happened to work on Python <= 3.12.0
+                    # WARNING: this relies on fork-after-threads behavior that happened to work on Python < 3.13 (all 3.12.x)
                     # newer Python (3.13+) is stricter and can deadlock because helper threads in the parent
                     # hold locks the child process inherits.
                     if "fork" not in mp.get_all_start_methods():

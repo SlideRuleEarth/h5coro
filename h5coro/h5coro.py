@@ -105,9 +105,10 @@ class H5Coro:
         multiProcess = False,
         maxProcesses = None
     ):
-        # Disable multiprocess on Python > 3.12.0 due to fork-after-threads deadlocks in newer runtimes.
-        if multiProcess and (sys.version_info[:3] > (3, 12, 0)):
-            log.warning("multiProcess disabled on Python >3.12.0 due to fork-after-threads deadlock risk; falling back to single process.")
+        # Disable multiprocess on Python >= 3.13 due to fork-after-threads deadlocks in newer runtimes.
+        # All 3.12.x patch releases still tolerate fork-after-threads, so guard on the minor version only.
+        if multiProcess and (sys.version_info[:2] >= (3, 13)):
+            log.warning("multiProcess disabled on Python >=3.13 due to fork-after-threads deadlock risk; falling back to single process.")
             multiProcess = False
 
         self.resource = resource
@@ -132,8 +133,10 @@ class H5Coro:
         self.baseAddress = 0
         self.rootAddress = H5Dataset.readSuperblock(self)
 
-        # Register automatic cleanup when the object is deleted
-        weakref.finalize(self, self._cleanup, self.driver, self.cache, self.cache_locks, log)
+        # Register automatic cleanup when the object is garbage collected.
+        # NOTE: the callback must not reference self (a bound method would keep the
+        # object alive and the finalizer would never run); use the static helper.
+        self._finalizer = weakref.finalize(self, H5Coro._cleanup, self.driver, self.cache, self.cache_locks, log, self.verbose)
 
         # Limit for concurrent processes in multi-process mode
         if self.multiProcess:
@@ -221,19 +224,21 @@ class H5Coro:
         links, attributes, _ = self.inspectPath(path, w_attr)
         # inspect each link to get metadata, attributes, group info, etc
         if len(links) > 0:
-            executor = ThreadPoolExecutor(max_workers=(len(links) + len(attributes)))
-            futures = [executor.submit(inspectThread, self, f'{path}/{link}', w_attr) for link in links]
-            for future in as_completed(futures):
-                name, metadata, attrs = future.result() # overwrites attribute set
-                element = isolateElement(name, path)
-                if metadata == None: # group
-                    groups[element] = {}
-                    for attr in attrs:
-                        groups[element][attr] = attrs[attr]
-                elif metadata.type != None: # variable
-                    variables[element] = {'__metadata__': metadata}
-                    for attr in attrs:
-                        variables[element][attr] = attrs[attr]
+            # use a context-managed executor so the worker threads (whose closures
+            # capture self) are shut down when the listing completes
+            with ThreadPoolExecutor(max_workers=(len(links) + len(attributes))) as executor:
+                futures = [executor.submit(inspectThread, self, f'{path}/{link}', w_attr) for link in links]
+                for future in as_completed(futures):
+                    name, metadata, attrs = future.result() # overwrites attribute set
+                    element = isolateElement(name, path)
+                    if metadata == None: # group
+                        groups[element] = {}
+                        for attr in attrs:
+                            groups[element][attr] = attrs[attr]
+                    elif metadata.type != None: # variable
+                        variables[element] = {'__metadata__': metadata}
+                        for attr in attrs:
+                            variables[element][attr] = attrs[attr]
 
         # return results
         return variables, attributes, groups
@@ -294,14 +299,19 @@ class H5Coro:
     #######################
     # _cleanup
     #######################
-    def _cleanup(self, driver, cache, cache_locks, log):
-        """Function to clean up resources when the object is deleted."""
+    @staticmethod
+    def _cleanup(driver, cache, cache_locks, log, verbose=False):
+        """Release resources (driver connection + cached cache lines).
+
+        Static so it can be used as a weakref.finalize callback without keeping
+        the H5Coro object alive. Safe to invoke more than once.
+        """
         try:
             if driver and hasattr(driver, 'close'):
                 driver.close()
             cache.clear()
             cache_locks.clear()
-            if self.verbose:
+            if verbose:
                 log.info("H5Coro resources cleaned up.")
         except Exception as e:
             log.error(f"Error while cleaning up resources: {e}")
@@ -310,5 +320,17 @@ class H5Coro:
     # close
     #######################
     def close(self):
-        self._cleanup(self.driver, self.cache, self.cache_locks, log)
+        # Running the finalizer guarantees cleanup happens at most once, whether
+        # triggered explicitly here or by garbage collection.
+        self._finalizer()
+
+    #######################
+    # context manager
+    #######################
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
