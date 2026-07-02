@@ -2189,11 +2189,12 @@ class H5Dataset:
         shuffle_block_size = int(len(input) / type_size)
         elements_to_shuffle = int(output_size / type_size)
         start_element = int(output_offset / type_size)
-        if start_element + elements_to_shuffle > shuffle_block_size:
-            # numpy slicing would silently clamp + zero-pad here; the loop this
-            # replaces raised IndexError on a window past the chunk, so stay loud
-            raise FatalError(f'shuffle window exceeds chunk: '
-                             f'{start_element + elements_to_shuffle} > {shuffle_block_size}')
+        if output_size < 0 or start_element < 0 or start_element + elements_to_shuffle > shuffle_block_size:
+            # numpy slicing would silently clamp (or wrap, for negative offsets) and
+            # zero-pad here; the loop this replaces raised on a window outside the
+            # chunk, so stay loud
+            raise FatalError(f'shuffle window outside chunk: offset {output_offset}, '
+                             f'size {output_size}, block {shuffle_block_size}')
         blocks = numpy.frombuffer(input, dtype=numpy.uint8, count=type_size * shuffle_block_size)
         window = blocks.reshape(type_size, shuffle_block_size)[:, start_element:start_element + elements_to_shuffle]
         output = window.transpose().tobytes()

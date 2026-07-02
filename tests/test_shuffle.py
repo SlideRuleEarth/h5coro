@@ -74,6 +74,23 @@ class TestShuffleChunk:
         with pytest.raises(FatalError):
             dataset.shuffleChunk(data, 5 * type_size, 6 * type_size, type_size)
 
+    def test_zero_elements_at_block_boundary(self, type_size):
+        # zero-element window starting exactly at the end of the block sits on
+        # the guard boundary: allowed, empty output (matching the old loop)
+        data = bytes(range(type_size)) * 16
+        dataset = make_dataset()
+        result = dataset.shuffleChunk(data, len(data), 0, type_size)
+        assert bytes(result) == b''
+
+    def test_negative_window_raises(self, type_size):
+        # the old loop wrapped around via python negative indexing here; stay loud
+        data = bytes(range(type_size)) * 16
+        dataset = make_dataset()
+        with pytest.raises(FatalError):
+            dataset.shuffleChunk(data, -8 * type_size, 4 * type_size, type_size)
+        with pytest.raises(FatalError):
+            dataset.shuffleChunk(data, 0, -type_size, type_size)
+
 def test_known_pattern():
     # bytes of element e at input[v * block + e]: two uint32 elements
     # 0x03020100 and 0x07060504 shuffle to lo-bytes then hi-bytes
