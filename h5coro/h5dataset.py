@@ -2183,16 +2183,23 @@ class H5Dataset:
     def shuffleChunk(self, input, output_offset, output_size, type_size):
         if self.resourceObject.errorChecking and (type_size < 0 or type_size > 8):
             raise FatalError(f'invalid data size to perform shuffle on: {type_size}')
-        output = bytearray(output_size)
-        dst_index = 0
+        # the shuffle filter stores byte v of element e at input[v * block + e];
+        # undoing it is a transpose of the (type_size, block) byte matrix, windowed
+        # to the requested elements
         shuffle_block_size = int(len(input) / type_size)
         elements_to_shuffle = int(output_size / type_size)
         start_element = int(output_offset / type_size)
-        for element_index in range(start_element, start_element + elements_to_shuffle):
-            for val_index in range(0, type_size):
-                src_index = (val_index * shuffle_block_size) + element_index
-                output[dst_index] = input[src_index]
-                dst_index += 1
+        if output_size < 0 or start_element < 0 or start_element + elements_to_shuffle > shuffle_block_size:
+            # numpy slicing would silently clamp (or wrap, for negative offsets) and
+            # zero-pad here; the loop this replaces raised on a window outside the
+            # chunk, so stay loud
+            raise FatalError(f'shuffle window outside chunk: offset {output_offset}, '
+                             f'size {output_size}, block {shuffle_block_size}')
+        blocks = numpy.frombuffer(input, dtype=numpy.uint8, count=type_size * shuffle_block_size)
+        window = blocks.reshape(type_size, shuffle_block_size)[:, start_element:start_element + elements_to_shuffle]
+        output = window.transpose().tobytes()
+        if len(output) < output_size: # ragged tail: match the zero padding of bytearray(output_size)
+            output += bytes(output_size - len(output))
         return output
 
     #######################
