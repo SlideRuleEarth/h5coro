@@ -148,6 +148,7 @@ class H5Dataset:
         self.dataChunkBufferSize    = 0
         self.meta                   = H5Metadata()
         self.sharedBuffer           = None
+        self._ownsSharedBuffer      = False
         self.values                 = None
 
         # check for null dataset
@@ -223,6 +224,7 @@ class H5Dataset:
         if self.resourceObject.multiProcess:
             if self.meta.ndims > 0:
                 self.sharedBuffer = shared_memory.SharedMemory(create=True, size=buffer_size)
+                self._ownsSharedBuffer = True
                 buffer = self.sharedBuffer.buf
         else:
             buffer = bytearray(buffer_size)
@@ -313,6 +315,12 @@ class H5Dataset:
             self.values = numpy.frombuffer(buffer, dtype=datatype, count=elements)
             if self.meta.ndims > 1:
                 self.values = self.values.reshape(self.shape)
+            # When backed by shared memory, numpy.frombuffer returns a zero-copy VIEW that
+            # exports a pointer into the mmap. Copy it so the returned array owns its data;
+            # otherwise the shared memory cannot be closed/unlinked ("cannot close exported
+            # pointers exist") and the error surfaces from __del__ finalizers.
+            if self.sharedBuffer is not None:
+                self.values = numpy.array(self.values)
         elif self.meta.type == H5Metadata.STRING_TYPE or self.meta.type == H5Metadata.VL_STRING_TYPE:
             try:
                 if self.meta.signedval:
@@ -324,14 +332,48 @@ class H5Dataset:
         else:
             log.warning(f'{self.dataset} is an unsupported datatype {self.meta.type}: unable to populate values')
 
+        # Release shared memory deterministically. self.values (and the string case) now own
+        # their data, so drop the local view and free the mmap here instead of in __del__.
+        buffer = None
+        self._releaseSharedBuffer()
+
+    #######################
+    # Release shared memory
+    #######################
+    def _releaseSharedBuffer(self):
+        """Close and unlink the shared-memory block, if any.
+
+        Safe to call more than once. Only the creating (parent) process should
+        unlink; forked child copies just close their inherited handle.
+        """
+        shm = self.sharedBuffer
+        if shm is None:
+            return
+        self.sharedBuffer = None
+        try:
+            shm.close()
+        except BufferError:
+            # A consumer still holds an exported pointer into the mmap; leave it to
+            # its own finalizer rather than crashing. Copying self.values above is
+            # what normally prevents this.
+            pass
+        except Exception as e:
+            log.warning(f'error closing shared buffer for {self.dataset}: {e}')
+        # Only unlink from the process that created the block.
+        if getattr(self, '_ownsSharedBuffer', False):
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                log.warning(f'error unlinking shared buffer for {self.dataset}: {e}')
+
     #######################
     # Destructor
     #######################
     def __del__(self):
         self.values = None
-        if self.sharedBuffer != None:
-            self.sharedBuffer.close()
-            self.sharedBuffer.unlink()
+        self._releaseSharedBuffer()
 
     #######################
     # readField
