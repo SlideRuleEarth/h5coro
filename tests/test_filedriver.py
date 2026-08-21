@@ -44,3 +44,27 @@ class TestFileDriver:
         h5coro_results = None
         h5obj.close()
         h5obj = None
+
+
+@pytest.mark.parametrize("boundary_chunk", [1, 2, 5])
+def test_chunk_boundary_read(boundary_chunk):
+    """Regression: a hyperslice starting exactly on a chunk boundary past the first
+    chunk used to raise FatalError('invalid location to read chunk')."""
+    local_file = download_hdf_to_local()
+    dataset_path, chunk_size, num_elements = find_chunked_1d_dataset(local_file)
+
+    start = boundary_chunk * chunk_size
+    assert start % chunk_size == 0 and start > 0
+    stop = min(start + 10, num_elements)
+
+    expected = read_slice_with_h5py(local_file, dataset_path, start, stop)
+
+    h5obj = h5coro.H5Coro(local_file, filedriver.FileDriver, errorChecking=True)
+    promise = h5obj.readDatasets(
+        [{'dataset': dataset_path, 'hyperslice': [[start, stop]]}], block=True
+    )
+    actual = promise[dataset_path]
+    np.testing.assert_array_equal(actual, expected)
+    promise = None
+    h5obj.close()
+    h5obj = None

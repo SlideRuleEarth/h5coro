@@ -311,6 +311,31 @@ def download_hdf_to_local():
 
     return HDF_OBJECT_LOCAL
 
+def find_chunked_1d_dataset(file_path):
+    """Return (path, chunk_size, num_elements) for a 1-D chunked dataset in DATASET_PATHS.
+
+    Used to exercise reads whose hyperslice starts exactly on a chunk boundary
+    (regression for the FatalError on chunk-boundary-aligned starts).
+    """
+    with h5py.File(file_path, 'r') as hdf_file:
+        for dataset_path in DATASET_PATHS:
+            if dataset_path in hdf_file:
+                dataset = hdf_file[dataset_path]
+                if dataset.ndim == 1 and dataset.chunks is not None:
+                    chunk_size = dataset.chunks[0]
+                    num_elements = dataset.shape[0]
+                    # need at least two chunks so a boundary start past chunk 0 exists
+                    if num_elements > 2 * chunk_size:
+                        return dataset_path, chunk_size, num_elements
+    raise AssertionError("No suitable 1-D chunked dataset found for boundary test")
+
+
+def read_slice_with_h5py(file_path, dataset_path, start, stop):
+    """Read a 1-D slice [start:stop) of a single dataset using h5py."""
+    with h5py.File(file_path, 'r') as hdf_file:
+        return hdf_file[dataset_path][start:stop]
+
+
 def read_with_h5py(file_path, use_hyperslice):
     """Read datasets using h5py."""
     results = {}

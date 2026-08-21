@@ -1892,7 +1892,10 @@ class H5Dataset:
         if node_level == 0:
             # check for intersection for all dimensions
             for d in range(self.meta.ndims):
-                if node_slice[d][1] < self.hyperslice[d][0] or node_slice[d][0] >= self.hyperslice[d][1]:
+                # both node_slice and hyperslice are half-open intervals [start, stop);
+                # a chunk that ends exactly where the hyperslice starts shares no elements,
+                # so use <= here (not <) to exclude it.
+                if node_slice[d][1] <= self.hyperslice[d][0] or node_slice[d][0] >= self.hyperslice[d][1]:
                     return False
             return True
         else: # node_level > 0
