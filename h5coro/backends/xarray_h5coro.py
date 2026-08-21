@@ -117,6 +117,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
         # Create xarray dataset
         var_paths = [os.path.join(group, name) for name in variables.keys()]
         data_vars = {}
+        var_dims = {}
         lazy_datasets = {}
         coord_datasets = []
         data_datasets = []
@@ -167,8 +168,9 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
             else:
                 data_datasets.append(dataset_dict)
 
-            # Store the variable in xarray.Dataset
-            data_vars[var_name] = (dim_names, xr.Variable(dim_names, LazyBackendArray(lazy_ds)))
+            # Store the variable in xarray.Dataset.
+            var_dims[var_name] = dim_names
+            data_vars[var_name] = xr.Variable(dim_names, LazyBackendArray(lazy_ds))
 
         # NOTE: xarray doesn't support lazy coordinates. They must be resolved at the time xr.Dataset is called.
         # Read coordinate datasets (blocking)
@@ -181,7 +183,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 lazy_ds = lazy_datasets[var_path]
                 lazy_ds.set_promise(coord_promise)
                 data = lazy_ds.read()
-                dims = data_vars[var_name][0]
+                dims = var_dims[var_name]
                 coords[var_name] = (dims, data)
 
                 # Remove coordinate variable from data_vars
@@ -195,7 +197,7 @@ class H5CoroBackendEntrypoint(BackendEntrypoint):
                 lazy_datasets[var_path].set_promise(data_promise)
 
         # Ensure consistency of dimension coordinates
-        dimension_coordinates = [val[0] for val in data_vars.values()]
+        dimension_coordinates = [var_dims[name] for name in data_vars.keys()]
         for coord_name, coordinate in coords.items():
             # For any of the coordinates that are dimension coordinates, ensure that their own coordinate
             # is set to itself
