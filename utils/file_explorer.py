@@ -17,7 +17,7 @@ parser.add_argument('--checkErrors',        action='store_true',    default=Fals
 parser.add_argument('--verbose',            action='store_true',    default=False)
 parser.add_argument('--loglevel',           type=str,               default="unset")
 parser.add_argument('--daac',               type=str,               default=None) # NSIDC
-args,_ = parser.parse_known_args()
+args = parser.parse_args()
 
 # Conifugre I/O Driver #
 if args.driver == "file":

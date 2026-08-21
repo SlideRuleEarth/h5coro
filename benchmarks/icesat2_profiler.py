@@ -58,7 +58,7 @@ parser.add_argument('--checkErrors','-e', action='store_true', default=False)
 parser.add_argument('--enableAttributes','-t', action='store_true', default=False)
 parser.add_argument('--verbose','-v', action='store_true', default=False)
 parser.add_argument('--loglvl','-j', type=str, default="CRITICAL")
-args,_ = parser.parse_known_args()
+args = parser.parse_args()
 
 # Configure H5Coro
 logger.config(logLevel=logging.INFO)

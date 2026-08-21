@@ -74,7 +74,7 @@ class TestS3Driver:
             '"cnt": 10, "region_mask": {"rows": 0, "cols": 0, "cellsize": 0.0, "latmin": 0.0, '
             '"geojson": "", "lonmax": 0.0, "latmax": 0.0, "lonmin": 0.0}, "len": 40.0, "cycle": 16, '
             '"sliderule_version": "v4.9.3", "surface": {"signal_threshold": 3.0, '
-            '"min_peak_separation": 0.5, "highest_peak_ration": 1.2, "model_as_poisoon": true, '
+            '"min_peak_separation": 0.5, "highest_peak_ratio": 1.2, "model_as_poisson": true, '
             '"max_bins": 10000, "bin_size": 0.5, "surace_width": 3.0, "max_range": 1000.0}, '
             '"raster": {"rows": 0, "cols": 0, "cellsize": 0.0, "latmin": 0.0, "geojson": "", '
             '"lonmax": 0.0, "latmax": 0.0, "lonmin": 0.0}, "atl03_geo_fields": [], '

@@ -22,7 +22,7 @@ parser.add_argument('--loglevel',           '-l', type=str,             default=
 parser.add_argument('--daac',               '-q', type=str,             default="NSIDC")
 parser.add_argument('--perf',               '-r', action='store_true',  default=False)
 parser.add_argument('--perfbin',            '-b', action='store_true',  default=False)
-args,_ = parser.parse_known_args()
+args = parser.parse_args()
 
 # Conifugre I/O Driver #
 if args.driver == "file":
